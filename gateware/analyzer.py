@@ -56,7 +56,7 @@ class Analyzer(LiteXModule):
         self.mode    = Signal(2)
         self.divider = Signal(32, reset=1)
         self.pattern = Signal(2)
-        self.limit   = Signal(64)
+        self.limit   = Signal(48)
         if cd == "sys":
             self.comb += [
                 capture.enable.eq(self.enable),
@@ -83,23 +83,19 @@ class Analyzer(LiteXModule):
         self.overflow = Signal()
         self.error    = Signal()
         self.count    = Signal(64)
-        self.words    = Signal(64)
         status = Cat(capture.running, capture.done, capture.overflow, capture.error)
         if cd == "sys":
             self.comb += [
                 Cat(self.running, self.done, self.overflow, self.error).eq(status),
                 self.count.eq(capture.count),
-                self.words.eq(capture.words),
             ]
         else:
             self.specials += MultiReg(status, Cat(self.running, self.done, self.overflow, self.error))
-            for name in ["count", "words"]:
-                bs = BusSynchronizer(64, cd, "sys")
-                self.submodules += bs
-                self.comb += [
-                    bs.i.eq(getattr(capture, name)),
-                    getattr(self, name).eq(bs.o),
-                ]
+            self.count_sync = count_sync = BusSynchronizer(len(capture.count), cd, "sys")
+            self.comb += [
+                count_sync.i.eq(capture.count),
+                self.count.eq(count_sync.o),
+            ]
 
         # Data Path --------------------------------------------------------------------------------
         layout = [("data", data_width)]
@@ -167,7 +163,6 @@ class Analyzer(LiteXModule):
             CSRField("error",    size=1, offset=3, description="Invalid configuration (> 32 bits/cycle)."),
         ])
         self._count     = CSRStatus(64, description="Captured samples.")
-        self._words     = CSRStatus(64, description="Data words sent.")
         self._clk_count = CSRStatus(32, description="Sample clock cycles (free running).")
         self.comb += [
             self.enable.eq(self._control.fields.enable),
@@ -180,6 +175,5 @@ class Analyzer(LiteXModule):
             self._status.fields.overflow.eq(self.overflow),
             self._status.fields.error.eq(self.error),
             self._count.status.eq(self.count),
-            self._words.status.eq(self.words),
             self._clk_count.status.eq(self.clk_count),
         ]

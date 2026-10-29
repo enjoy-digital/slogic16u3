@@ -56,10 +56,11 @@ class SLogicBaseSoC(SoCMini):
     Analyzer, Flash, fixed CSR map."""
     # Fixed CSR map (host software).
     csr_map = {
-        "ctrl"     : 0,
-        "analyzer" : 1,
-        "flash"    : 2,
-        "usb3_phy" : 3,
+        "ctrl"           : 0,
+        "analyzer"       : 1,
+        "flash"          : 2,
+        "usb3_phy"       : 3,
+        "identifier_mem" : 4,
     }
 
     def add_slogic(self, usb3_phy, samples, sample_cd="sample", base_rate=800e6, mspi_pads=None,

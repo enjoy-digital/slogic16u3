@@ -52,7 +52,7 @@ def run_capture(divider, mode, limit, pattern=0, seed=0, ready_rate=1.0, stop_af
                 break
         for _ in range(2):
             yield
-        for name in ["done", "overflow", "error", "count", "words", "running"]:
+        for name in ["done", "overflow", "error", "count", "running"]:
             status[name] = (yield getattr(dut, name))
     run_simulation(dut, generator())
     return inputs, words, status
@@ -66,7 +66,6 @@ class TestCapture(unittest.TestCase):
         self.assertFalse(status["overflow"])
         self.assertFalse(status["error"])
         self.assertEqual(status["count"], limit)
-        self.assertEqual(status["words"], len(words))
         if pattern:
             # Counter: sample i of the capture = i (16-bit).
             ref = capture_reference([i & 0xffff for i in range(len(inputs))], divider, mode, limit)
