@@ -51,15 +51,17 @@ Host stack (layered, C first):
 
 ## Timing Closure (GW5AT-15, Gowin 1.9.10)
 
-| Clock         | Target   | USB3 only | Full design (best so far) | Critical paths                                         |
-|---------------|----------|-----------|---------------------------|--------------------------------------------------------|
-| sys           | 62.5MHz  | 83.4MHz   | 68.8MHz                   | USB3 Link Layer TX (congestion).                       |
-| tx (PIPE)     | 125MHz   | 126.9MHz  | 124.3MHz                  | USB3-PIPE PIPE TX (congestion).                        |
-| sample        | 100MHz   | -         | 79.1MHz                   | Decimation recurrence (now a table/one adder), limit.  |
+| Clock         | Target   | USB3 only | Full design (place_option 2) |
+|---------------|----------|-----------|------------------------------|
+| sys           | 62.5MHz  | 83.4MHz   | 65.4MHz                      |
+| tx (PIPE)     | 125MHz   | 126.9MHz  | 133.6MHz                     |
+| rx            | 125MHz   | 188.4MHz  | 175.7MHz                     |
+| sample        | 100MHz   | -         | 100.8MHz                     |
 
-The USB3 PHY + Device Core use ~70% of the logic: the full design is at ~91% logic / ~96% CLS, routing and
-timings depend on the placement (Gowin place_option, no seed). Fallbacks: sample clock at 80MHz (640MS/s base),
-`--no-flash` bring-up bitstreams, MaxBurst 4.
+Full design: 13.4K/15.1K logic (89%), 95% CLS, 80% BSRAM, 2/2 PLLs: timings met with place_option 2 (0/1: tx and
+sample clocks a few % short, 3/4: unrouted). Gowin PnR has no seed: `scripts/build_best.py` builds the place
+algorithms in parallel and keeps the first meeting the timings (as slogic16u3-trace). Margins are thin: next
+steps for robustness: limit stage pipelining (sample clock), Gowin >= 1.9.12, MaxBurst 4.
 
 ## Hardware Bring-up Steps
 

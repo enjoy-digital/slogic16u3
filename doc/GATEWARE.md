@@ -74,9 +74,12 @@ BSRAMs on the GW5AT-15A).
 | Build                          | Logic       | BSRAM | sys (62.5) | tx (125)  | sample (100) |
 |--------------------------------|-------------|-------|------------|-----------|--------------|
 | USB3 only (`--no-analyzer --no-flash`) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -          |
-| Full (current)                 | see `doc/PLAN.md` timing status                                      |
+| Full (place_option 2)          | 13443 (89%) | 80%   | 65.4MHz    | 133.6MHz  | 100.8MHz     |
 
 ¹ USB3 packets slots optimized out without the Analyzer.
+
+Gowin PnR has no seed and the design is ~90% full: `scripts/build_best.py` builds several place algorithms in
+parallel and keeps one meeting the timings.
 
 ## Simulation
 

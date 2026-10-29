@@ -22,7 +22,8 @@ to PulseView:
 - **Tested before the hardware**: Migen unit tests, USB3 host model ↔ Device Core ↔ SoC system simulation, C unit
   tests and sigrok/ngscopeclient end-to-end tests on the simulated device.
 
-> **Status: work in progress.** The gateware builds for the GW5AT-15 (Gowin IDE) and is validated in simulation,
+> **Status: work in progress.** The gateware builds for the GW5AT-15 (Gowin IDE, timings met: 89% of the logic)
+> and is validated in simulation,
 > the host stack is validated on the simulated device. **Hardware bring-up is the next step** (USB3 link, inputs,
 > rates, Flash pads): see [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU
 > loader.
@@ -95,7 +96,8 @@ Add `-d sim` (tools) or `conn=sim` (sigrok) to run on the simulated device. Deta
 ```sh
 source scripts/env.sh
 python3 -m pytest test                        # Gateware/system/host tests (Migen, simulated device).
-./slogic_16u3.py --build                      # Bitstream: build/gateware/sipeed_slogic16u3.{fs,bin}.
+./scripts/build_best.py                       # Bitstream (placements in parallel, timings checked):
+                                              # build/gateware/sipeed_slogic16u3.{fs,bin}.
 ./slogic_16u3.py --load                       # SRAM load over JTAG (JST SH connector, FT2232: openFPGALoader).
 
 # First install (MODE button: DFU loader, LED blinking red):
