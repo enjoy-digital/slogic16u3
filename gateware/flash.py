@@ -10,8 +10,9 @@
   functions are probed by the host: JEDEC ID read with each mapping). All pads are inputs while the
   core is disabled (default), pads in `high` are driven high when enabled (ex: WP_N/HOLD_N).
 - Transfers: full-duplex SPI mode 0 transfers of `length` bytes from a buffer (Wishbone, bytes in
-  little-endian words), the received bytes replace the sent ones in the buffer. CS_N asserted during the
-  transfer, kept asserted after it with `hold` (multi-part commands).
+  little-endian words): bytes sent from the TX buffer (Wishbone writes), bytes received to the RX buffer
+  (Wishbone reads, at the same offsets). CS_N asserted during the transfer, kept asserted after it with
+  `hold` (multi-part commands). TX/RX buffers: simple dual port memories (BSRAMs).
 
 A 512-byte buffer covers a Page Program (4-byte header + 256 bytes) or a read of up to 508 bytes in a
 single transfer.
@@ -64,18 +65,23 @@ class Flash(LiteXModule):
         # # #
 
         # Buffer -----------------------------------------------------------------------------------
-        words = buffer_size//4
-        mem   = Memory(32, words)
-        wb_port  = mem.get_port(write_capable=True, we_granularity=8)
-        spi_port = mem.get_port(write_capable=True, we_granularity=8)
-        self.specials += mem, wb_port, spi_port
+        words  = buffer_size//4
+        tx_mem = Memory(32, words)
+        rx_mem = Memory(32, words)
+        tx_wr  = tx_mem.get_port(write_capable=True, we_granularity=8)
+        tx_rd  = tx_mem.get_port(has_re=False)
+        rx_wr  = rx_mem.get_port(write_capable=True, we_granularity=8)
+        rx_rd  = rx_mem.get_port(has_re=False)
+        self.specials += tx_mem, tx_wr, tx_rd, rx_mem, rx_wr, rx_rd
 
-        # Wishbone (ack one cycle after the request: synchronous read).
+        # Wishbone: writes to the TX buffer, reads from the RX buffer (ack one cycle after the
+        # request: synchronous read).
         self.comb += [
-            wb_port.adr.eq(bus.adr[:log2_int(words)]),
-            wb_port.dat_w.eq(bus.dat_w),
-            bus.dat_r.eq(wb_port.dat_r),
-            [wb_port.we[i].eq(bus.cyc & bus.stb & bus.we & bus.sel[i] & ~bus.ack) for i in range(4)],
+            tx_wr.adr.eq(bus.adr[:log2_int(words)]),
+            tx_wr.dat_w.eq(bus.dat_w),
+            [tx_wr.we[i].eq(bus.cyc & bus.stb & bus.we & bus.sel[i] & ~bus.ack) for i in range(4)],
+            rx_rd.adr.eq(bus.adr[:log2_int(words)]),
+            bus.dat_r.eq(rx_rd.dat_r),
         ]
         self.sync += [
             bus.ack.eq(0),
@@ -138,9 +144,10 @@ class Flash(LiteXModule):
         held  = Signal()
         byte_sel = Signal(2)
         self.comb += [
-            spi_port.adr.eq(index[2:]),
+            tx_rd.adr.eq(index[2:]),
+            rx_wr.adr.eq(index[2:]),
             byte_sel.eq(index[:2]),
-            spi_port.dat_w.eq(Replicate(shift, 4)),
+            rx_wr.dat_w.eq(Replicate(shift, 4)),
         ]
 
         self.fsm = fsm = FSM(reset_state="IDLE")
@@ -159,7 +166,7 @@ class Flash(LiteXModule):
         )
         fsm.act("LOAD-WAIT",
             self.busy.eq(1),
-            NextValue(shift, Array([spi_port.dat_r[8*i:8*(i + 1)] for i in range(4)])[byte_sel]),
+            NextValue(shift, Array([tx_rd.dat_r[8*i:8*(i + 1)] for i in range(4)])[byte_sel]),
             NextValue(bit, 7),
             If(tick, NextState("LOW"))
         )
@@ -185,10 +192,7 @@ class Flash(LiteXModule):
         )
         fsm.act("STORE",
             self.busy.eq(1),
-            spi_port.we[0].eq(byte_sel == 0),
-            spi_port.we[1].eq(byte_sel == 1),
-            spi_port.we[2].eq(byte_sel == 2),
-            spi_port.we[3].eq(byte_sel == 3),
+            [rx_wr.we[i].eq(byte_sel == i) for i in range(4)],
             NextValue(index, index + 1),
             If(index + 1 == self.length,
                 NextValue(held, self.hold),
@@ -205,11 +209,11 @@ class Flash(LiteXModule):
 
     def add_csr(self):
         self._control = CSRStorage(fields=[
-            CSRField("enable",  size=1, offset=0, reset=self.enable.reset, description="Drive the Flash pads (else all inputs)."),
-            CSRField("clk",     size=3, offset=4,  reset=self.pins[0].reset, description="CLK pad."),
-            CSRField("cs_n",    size=3, offset=8,  reset=self.pins[1].reset, description="CS_N pad."),
-            CSRField("mosi",    size=3, offset=12, reset=self.pins[2].reset, description="MOSI pad."),
-            CSRField("miso",    size=3, offset=16, reset=self.pins[3].reset, description="MISO pad."),
+            CSRField("enable",  size=1, offset=0, reset=self.enable.reset.value, description="Drive the Flash pads (else all inputs)."),
+            CSRField("clk",     size=3, offset=4,  reset=self.pins[0].reset.value, description="CLK pad."),
+            CSRField("cs_n",    size=3, offset=8,  reset=self.pins[1].reset.value, description="CS_N pad."),
+            CSRField("mosi",    size=3, offset=12, reset=self.pins[2].reset.value, description="MOSI pad."),
+            CSRField("miso",    size=3, offset=16, reset=self.pins[3].reset.value, description="MISO pad."),
             CSRField("high",    size=8, offset=20, description="Pads driven high (ex: WP_N/HOLD_N)."),
         ])
         self._divider = CSRStorage(8, reset=2, description="SPI clock = sys/(2*(divider + 1)), divider >= 2.")
