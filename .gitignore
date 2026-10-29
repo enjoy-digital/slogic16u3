@@ -12,4 +12,6 @@ __pycache__/
 .pytest_cache/
 *.so
 *.so.*
+software/sigrok/build/
+software/sigrok/install/
 software/user/build/

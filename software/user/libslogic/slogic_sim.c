@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
  * libslogic: simulated device (software model of the gateware), for tests and development without
- * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>]".
+ * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
  *
  * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
  * - Capture stream: counter test pattern (sample i = i*divider, as the gateware) or synthetic inputs (CHn:
  *   square wave toggling every 2^(n+2) base samples), packed as the gateware (32-bit packer, last word
- *   flushed). rate: emulated host bandwidth (overflow when the capture needs more, after the FIFO).
+ *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
+ *   (overflow when the capture needs more, after the FIFO).
  * - Flash: 16MB SPI Flash (W25Q128-like: JEDEC ID ef 40 18) on hidden pads (pins), golden image area
  *   (0x800000-) filled with 0xa5.
  *
@@ -59,6 +60,8 @@ struct sim {
     uint64_t pack;        /* Packer. */
     unsigned pack_bits;
     double   rate;        /* Emulated host bandwidth (bytes/s, 0: unlimited). */
+    double   t_start;     /* Capture start (data paced at the samplerate). */
+    int      realtime;    /* Data paced at the samplerate (default, "fast" disables it). */
     uint64_t words_sent;  /* 32-bit words. */
     /* Flash. */
     uint32_t flash_control, flash_divider, flash_xfer;
@@ -189,6 +192,7 @@ static void sim_start(struct sim *s)
     s->words_sent = 0;
     s->ended      = 0;
     s->status     = SLOGIC_STATUS_RUNNING;
+    s->t_start    = slogic_time();
     /* Invalid configuration: more than 32 bits per sample clock cycle. */
     unsigned d = s->divider ? s->divider : 1;
     if (((SIM_RATIO + d - 1)/d)*ch > 32) {
@@ -361,11 +365,27 @@ static int sim_stream_start(void *ctx)
 static int sim_stream_read(void *ctx, const uint8_t **data, size_t *size, int *last, int timeout_ms)
 {
     struct sim *s = ctx;
-    (void)timeout_ms;
-
     if (!s->streaming || s->ended)
         return SLOGIC_ERR_END;
-    *size = sim_generate(s, s->buf, SIM_BUF_SIZE, last);
+    size_t max = SIM_BUF_SIZE;
+    if (s->realtime && (s->status & SLOGIC_STATUS_RUNNING)) {
+        /* Data paced at the samplerate: bytes available since the start. */
+        double rate  = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1)*sim_channels(s)/8;
+        double t0    = slogic_time();
+        for (;;) {
+            double avail = (slogic_time() - s->t_start)*rate - (double)s->words_sent*4;
+            if (avail >= 8) {
+                max = avail < SIM_BUF_SIZE ? ((size_t)avail)/8*8 : SIM_BUF_SIZE;
+                break;
+            }
+            if (!(s->control & SLOGIC_CONTROL_ENABLE) || (s->limit && s->sample >= s->limit))
+                break;
+            if ((slogic_time() - t0)*1e3 >= (timeout_ms < 0 ? 1e9 : timeout_ms))
+                return SLOGIC_ERR_TIMEOUT;
+            slogic_sleep_ms(1);
+        }
+    }
+    *size = sim_generate(s, s->buf, max, last);
     *data = s->buf;
     if (*last)
         s->ended = 1;
@@ -432,6 +452,7 @@ int slogic_sim_open(const char *args, struct slogic_dev *dev)
     s->pins[0] = 2; s->pins[1] = 0; s->pins[2] = 3; s->pins[3] = 1; /* Hidden mapping (probed). */
     if ((p = strstr(args, "rate=")))
         s->rate = atof(p + 5);
+    s->realtime = !strstr(args, "fast");
     if ((p = strstr(args, "pins=")) && strlen(p + 5) >= 4)
         for (int i = 0; i < 4; i++)
             s->pins[i] = (unsigned)(p[5 + i] - '0') % SLOGIC_FLASH_NPADS;
@@ -440,7 +461,8 @@ int slogic_sim_open(const char *args, struct slogic_dev *dev)
     return SLOGIC_OK;
 }
 
-/* Test access: golden image area writes (slogic_sim_golden_writes). */
+/* Test access: golden image area writes. */
+int slogic_sim_golden_writes(struct slogic_dev *dev);
 int slogic_sim_golden_writes(struct slogic_dev *dev)
 {
     if (!dev || dev->t != &sim_transport)

@@ -88,7 +88,7 @@ static void check_pattern(unsigned channels, uint64_t divider, const uint8_t *da
 
 static void test_info(void)
 {
-    struct slogic_dev *dev = open_sim("sim");
+    struct slogic_dev *dev = open_sim("sim:fast");
     struct slogic_info info;
 
     CHECK_OK(slogic_get_info(dev, &info));
@@ -107,7 +107,7 @@ static void test_info(void)
 
 static void test_config(void)
 {
-    struct slogic_dev *dev = open_sim("sim");
+    struct slogic_dev *dev = open_sim("sim:fast");
     struct slogic_info info;
     struct slogic_config c = { .channels = 16, .samplerate = 200000000 };
     char msg[128];
@@ -157,7 +157,7 @@ static void test_capture_patterns(void)
         {  4,   1000000,  300001 },
         { 16,    100000,  600000 }, /* Several 256KB buffers. */
     };
-    struct slogic_dev *dev = open_sim("sim");
+    struct slogic_dev *dev = open_sim("sim:fast");
     struct slogic_info info;
     slogic_get_info(dev, &info);
 
@@ -182,7 +182,7 @@ static void test_capture_patterns(void)
 
 static void test_continuous_stop(void)
 {
-    struct slogic_dev *dev = open_sim("sim");
+    struct slogic_dev *dev = open_sim("sim:fast");
     struct slogic_config c = { .channels = 16, .samplerate = 100000000, .pattern = SLOGIC_PATTERN_COUNTER };
     struct slogic_status st;
     const uint8_t *data;
@@ -205,7 +205,7 @@ static void test_continuous_stop(void)
 static void test_overflow(void)
 {
     /* Emulated host at 100MB/s, 16 channels at 200MS/s (400MB/s): overflow. */
-    struct slogic_dev *dev = open_sim("sim:rate=100e6");
+    struct slogic_dev *dev = open_sim("sim:rate=100e6,fast");
     struct slogic_config c = { .channels = 16, .samplerate = 200000000, .limit = 10000000 };
     struct slogic_status st;
     size_t size;
@@ -236,7 +236,7 @@ static void test_unpack(void)
 
 static void test_flash(void)
 {
-    struct slogic_dev *dev = open_sim("sim");
+    struct slogic_dev *dev = open_sim("sim:fast");
     struct slogic_flash_pins pins;
     uint8_t jedec[3];
     size_t size = 300*1024 + 123;

@@ -110,27 +110,50 @@ class Capture(LiteXModule):
 
         # Decimation -------------------------------------------------------------------------------
         # skip: samples to skip before the next kept one, from the first sample of the current word.
-        # Positions of the kept samples: skip + j*divsat (j < ratio, kept while < ratio).
+        # Single cycle recurrence (only skip -> skip_n): small table for divider < ratio (skip <
+        # divider), one adder for divider >= ratio (divm: divider - ratio, quasi-static).
+        divm     = Signal(32)
+        self.sync += divm.eq(divider - ratio)
         skip     = Signal(32)
         skip_cur = Signal(32)
         skip_n   = Signal(32)
-        skip_lo  = Signal(4)
-        pos      = [Signal(7) for _ in range(ratio + 1)]
-        valid    = Signal(ratio)
-        k        = Signal(4)
+        small_n  = Signal(3)
+        table    = {}
+        for d in range(1, ratio):
+            for s in range(d):
+                kept = (ratio - s + d - 1)//d
+                table[(d << 3) | s] = small_n.eq(s + kept*d - ratio)
+        table["default"] = small_n.eq(0)
         self.comb += [
             skip_cur.eq(Mux(s0_start, 0, skip)),
-            skip_lo.eq(Mux(skip_cur >= ratio, ratio, skip_cur[:4])),
-            [pos[j].eq(skip_lo + j*divsat) for j in range(ratio + 1)],
+            Case(Cat(skip_cur[:3], divider[:3]), table),
+            If(~div_big,
+                skip_n.eq(small_n)
+            ).Elif(skip_cur[3:] != 0, # >= ratio.
+                skip_n.eq(skip_cur - ratio)
+            ).Else(
+                skip_n.eq(skip_cur + divm)
+            )
+        ]
+        self.sync += If(s0_run, skip.eq(skip_n))
+
+        # Positions of the kept samples (registered skip, data delayed one cycle): skip + j*divsat
+        # (j < ratio, kept while < ratio).
+        s1       = Signal(ratio*nchannels)
+        s1_run   = Signal()
+        skip1_lo = Signal(4)
+        self.sync += [
+            s1.eq(s0),
+            s1_run.eq(s0_run),
+            skip1_lo.eq(Mux(skip_cur[3:] != 0, ratio, skip_cur[:3])),
+        ]
+        pos   = [Signal(7) for _ in range(ratio)]
+        valid = Signal(ratio)
+        k     = Signal(4)
+        self.comb += [
+            [pos[j].eq(skip1_lo + j*divsat) for j in range(ratio)],
             [valid[j].eq(pos[j] < ratio) for j in range(ratio)],
             k.eq(Reduce("ADD", [valid[j] for j in range(ratio)])),
-            If(skip_cur >= ratio,
-                skip_n.eq(skip_cur - ratio)
-            ).Elif(div_big,
-                skip_n.eq(skip_cur + divider - ratio)
-            ).Else(
-                Case(k, {n: skip_n.eq(pos[n] - ratio) for n in range(ratio + 1)})
-            )
         ]
 
         # Decimated samples (compacted: d1[0:d1_k] valid), registered, lanes sized for the valid
@@ -140,12 +163,11 @@ class Capture(LiteXModule):
         d1_k      = Signal(4)
         d1_run    = Signal()
         for j in range(ratio):
-            choices = Array([s0[nchannels*i:nchannels*i + lane_bits[j]] for i in range(ratio)])
+            choices = Array([s1[nchannels*i:nchannels*i + lane_bits[j]] for i in range(ratio)])
             self.sync += d1[j].eq(choices[pos[j][:3]])
         self.sync += [
-            If(s0_run, skip.eq(skip_n)),
-            d1_k.eq(Mux(s0_run, k, 0)),
-            d1_run.eq(s0_run),
+            d1_k.eq(Mux(s1_run, k, 0)),
+            d1_run.eq(s1_run),
         ]
 
         # Limit ------------------------------------------------------------------------------------

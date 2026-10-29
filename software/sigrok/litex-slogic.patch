@@ -1,0 +1,2174 @@
+diff --git a/Makefile.am b/Makefile.am
+index 3b68142f..5be1195f 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -337,6 +337,18 @@ src_libdrivers_la_SOURCES += \
+ 	src/hardware/dcttech-usbrelay/protocol.c \
+ 	src/hardware/dcttech-usbrelay/api.c
+ endif
++if HW_LITEX_SLOGIC
++src_libdrivers_la_SOURCES += \
++	src/hardware/litex-slogic/protocol.h \
++	src/hardware/litex-slogic/protocol.c \
++	src/hardware/litex-slogic/api.c \
++	src/hardware/litex-slogic/libslogic/slogic.h \
++	src/hardware/litex-slogic/libslogic/slogic_internal.h \
++	src/hardware/litex-slogic/libslogic/slogic_regs.h \
++	src/hardware/litex-slogic/libslogic/slogic.c \
++	src/hardware/litex-slogic/libslogic/slogic_usb.c \
++	src/hardware/litex-slogic/libslogic/slogic_sim.c
++endif
+ if HW_DEMO
+ src_libdrivers_la_SOURCES += \
+ 	src/hardware/demo/protocol.h \
+diff --git a/configure.ac b/configure.ac
+index 024dd4da..97806095 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -356,6 +356,7 @@ SR_DRIVER([KERN scale], [kern-scale], [serial_comm])
+ SR_DRIVER([Kingst LA2016], [kingst-la2016], [libusb])
+ SR_DRIVER([Korad KAxxxxP], [korad-kaxxxxp], [serial_comm])
+ SR_DRIVER([Lascar EL-USB], [lascar-el-usb], [libusb])
++SR_DRIVER([Sipeed SLogic16U3 (LiteX)], [litex-slogic], [libusb])
+ SR_DRIVER([LeCroy LogicStudio], [lecroy-logicstudio], [libusb])
+ SR_DRIVER([LeCroy X-Stream], [lecroy-xstream])
+ SR_DRIVER([Link Instruments MSO-19], [link-mso19], [libserialport])
+diff --git a/src/hardware/litex-slogic/api.c b/src/hardware/litex-slogic/api.c
+new file mode 100644
+index 00000000..1b07f7b5
+--- /dev/null
++++ b/src/hardware/litex-slogic/api.c
+@@ -0,0 +1,316 @@
++/*
++ * This file is part of the libsigrok project.
++ *
++ * Copyright (C) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/*
++ * Sipeed SLogic16U3 with the open LiteX gateware (USB3 in the FPGA transceivers, LiteX CommUSB
++ * register accesses over EP0, capture data over Bulk IN), through libslogic:
++ *
++ *   sigrok-cli -d litex-slogic --samples 1M -c samplerate=100M
++ *   sigrok-cli -d litex-slogic:conn=sim ...        (simulated device, no hardware)
++ */
++
++#include <config.h>
++#include <string.h>
++#include "protocol.h"
++
++static const uint32_t scanopts[] = {
++	SR_CONF_CONN,
++};
++
++static const uint32_t drvopts[] = {
++	SR_CONF_LOGIC_ANALYZER,
++};
++
++static const uint32_t devopts[] = {
++	SR_CONF_CONTINUOUS,
++	SR_CONF_CONN | SR_CONF_GET,
++	SR_CONF_SAMPLERATE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
++	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET,
++	SR_CONF_LIMIT_MSEC | SR_CONF_GET | SR_CONF_SET,
++	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
++	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
++	SR_CONF_PATTERN_MODE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
++};
++
++static const int32_t trigger_matches[] = {
++	SR_TRIGGER_ZERO,
++	SR_TRIGGER_ONE,
++	SR_TRIGGER_RISING,
++	SR_TRIGGER_FALLING,
++	SR_TRIGGER_EDGE,
++};
++
++static const char *patterns[] = {
++	"inputs",
++	"counter",
++};
++
++static GSList *scan(struct sr_dev_driver *di, GSList *options)
++{
++	struct sr_dev_inst *sdi;
++	struct dev_context *devc;
++	struct slogic_dev *dev;
++	const char *conn = "usb";
++	char name[16];
++
++	for (GSList *l = options; l; l = l->next) {
++		struct sr_config *src = l->data;
++		if (src->key == SR_CONF_CONN)
++			conn = g_variant_get_string(src->data, NULL);
++	}
++	if (slogic_open(conn, &dev) != SLOGIC_OK)
++		return NULL;
++
++	devc = g_malloc0(sizeof(*devc));
++	devc->conn = g_strdup(conn);
++	slogic_get_info(dev, &devc->info);
++	slogic_close(dev);
++
++	/* Samplerates: all the 16 channels ones, plus the higher 8/4 channels ones. */
++	devc->num_samplerates = slogic_samplerates(&devc->info, 4, devc->samplerates, LITEX_SLOGIC_MAX_RATES);
++	devc->cur_samplerate  = SR_MHZ(100);
++	devc->capture_ratio   = 10;
++
++	sdi = g_malloc0(sizeof(*sdi));
++	sdi->status  = SR_ST_INACTIVE;
++	sdi->vendor  = g_strdup("Sipeed");
++	sdi->model   = g_strdup("SLogic16U3 (LiteX)");
++	sdi->version = g_strdup_printf("%u.%u", devc->info.version >> 16, devc->info.version & 0xffff);
++	sdi->serial_num = g_strdup(devc->info.serial);
++	sdi->connection_id = g_strdup(conn);
++	sdi->priv = devc;
++	for (unsigned i = 0; i < devc->info.nchannels; i++) {
++		snprintf(name, sizeof(name), "CH%u", i);
++		sr_channel_new(sdi, i, SR_CHANNEL_LOGIC, TRUE, name);
++	}
++	return std_scan_complete(di, g_slist_append(NULL, sdi));
++}
++
++static void clear_helper(struct dev_context *devc)
++{
++	g_free(devc->conn);
++	g_free(devc->unpacked);
++}
++
++static int dev_clear(const struct sr_dev_driver *di)
++{
++	return std_dev_clear_with_callback(di, (std_dev_clear_callback)clear_helper);
++}
++
++static int dev_open(struct sr_dev_inst *sdi)
++{
++	struct dev_context *devc = sdi->priv;
++	int r = slogic_open(devc->conn, &devc->dev);
++
++	if (r != SLOGIC_OK) {
++		sr_err("Could not open %s: %s.", devc->conn, slogic_strerror(r));
++		return SR_ERR;
++	}
++	return SR_OK;
++}
++
++static int dev_close(struct sr_dev_inst *sdi)
++{
++	struct dev_context *devc = sdi->priv;
++
++	slogic_close(devc->dev);
++	devc->dev = NULL;
++	return SR_OK;
++}
++
++static int config_get(uint32_t key, GVariant **data,
++	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
++{
++	struct dev_context *devc;
++
++	(void)cg;
++	if (!sdi)
++		return SR_ERR_ARG;
++	devc = sdi->priv;
++	switch (key) {
++	case SR_CONF_CONN:
++		*data = g_variant_new_string(devc->conn);
++		break;
++	case SR_CONF_SAMPLERATE:
++		*data = g_variant_new_uint64(devc->cur_samplerate);
++		break;
++	case SR_CONF_LIMIT_SAMPLES:
++		*data = g_variant_new_uint64(devc->limit_samples);
++		break;
++	case SR_CONF_LIMIT_MSEC:
++		*data = g_variant_new_uint64(devc->limit_msec);
++		break;
++	case SR_CONF_CAPTURE_RATIO:
++		*data = g_variant_new_uint64(devc->capture_ratio);
++		break;
++	case SR_CONF_PATTERN_MODE:
++		*data = g_variant_new_string(patterns[devc->pattern]);
++		break;
++	default:
++		return SR_ERR_NA;
++	}
++	return SR_OK;
++}
++
++static int config_set(uint32_t key, GVariant *data,
++	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
++{
++	struct dev_context *devc = sdi->priv;
++	int idx;
++
++	(void)cg;
++	switch (key) {
++	case SR_CONF_SAMPLERATE: {
++		uint64_t rate = g_variant_get_uint64(data);
++		if (!rate || devc->info.base_rate % rate)
++			return SR_ERR_ARG;
++		devc->cur_samplerate = rate;
++		break;
++	}
++	case SR_CONF_LIMIT_SAMPLES:
++		devc->limit_samples = g_variant_get_uint64(data);
++		break;
++	case SR_CONF_LIMIT_MSEC:
++		devc->limit_msec = g_variant_get_uint64(data);
++		break;
++	case SR_CONF_CAPTURE_RATIO:
++		devc->capture_ratio = g_variant_get_uint64(data);
++		break;
++	case SR_CONF_PATTERN_MODE:
++		if ((idx = std_str_idx(data, ARRAY_AND_SIZE(patterns))) < 0)
++			return SR_ERR_ARG;
++		devc->pattern = idx;
++		break;
++	default:
++		return SR_ERR_NA;
++	}
++	return SR_OK;
++}
++
++static int config_list(uint32_t key, GVariant **data,
++	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
++{
++	struct dev_context *devc = sdi ? sdi->priv : NULL;
++
++	switch (key) {
++	case SR_CONF_SCAN_OPTIONS:
++	case SR_CONF_DEVICE_OPTIONS:
++		return STD_CONFIG_LIST(key, data, sdi, cg, scanopts, drvopts, devopts);
++	case SR_CONF_SAMPLERATE:
++		if (!devc)
++			return SR_ERR_ARG;
++		*data = std_gvar_samplerates(devc->samplerates, devc->num_samplerates);
++		break;
++	case SR_CONF_TRIGGER_MATCH:
++		*data = std_gvar_array_i32(ARRAY_AND_SIZE(trigger_matches));
++		break;
++	case SR_CONF_PATTERN_MODE:
++		*data = g_variant_new_strv(ARRAY_AND_SIZE(patterns));
++		break;
++	default:
++		return SR_ERR_NA;
++	}
++	return SR_OK;
++}
++
++static int dev_acquisition_start(const struct sr_dev_inst *sdi)
++{
++	struct dev_context *devc = sdi->priv;
++	struct sr_trigger *trigger;
++	struct slogic_config cfg;
++	char msg[160];
++	int r;
++
++	devc->channels = litex_slogic_channels_mode(sdi);
++	devc->unitsize = slogic_unitsize(devc->channels);
++	/* Higher channel modes when the samplerate needs it are not possible: report the limit. */
++	cfg.samplerate = devc->cur_samplerate;
++	cfg.channels   = devc->channels;
++	cfg.pattern    = devc->pattern;
++	cfg.limit      = 0;
++	devc->received_samples = 0;
++	devc->sent_samples     = 0;
++	devc->acq_done         = FALSE;
++	devc->trigger_fired    = TRUE;
++	devc->stl              = NULL;
++
++	if ((trigger = sr_session_trigger_get(sdi->session))) {
++		int pre = devc->limit_samples ? (int)(devc->capture_ratio*devc->limit_samples/100) : 0;
++		devc->stl = soft_trigger_logic_new(sdi, trigger, pre);
++		if (!devc->stl)
++			return SR_ERR_MALLOC;
++		devc->trigger_fired = FALSE;
++	} else {
++		/* No trigger: exact sample count captured by the gateware. */
++		cfg.limit = devc->limit_samples;
++	}
++	if (slogic_config_check(&devc->info, &cfg, msg, sizeof(msg)) != SLOGIC_OK) {
++		sr_err("Invalid configuration: %s (enable fewer channels: 4/8/16 channels modes).", msg);
++		return SR_ERR_ARG;
++	}
++	if ((r = slogic_capture_start(devc->dev, &cfg)) != SLOGIC_OK) {
++		sr_err("Capture start: %s.", slogic_strerror(r));
++		return SR_ERR;
++	}
++	devc->start_us = g_get_monotonic_time();
++	std_session_send_df_header(sdi);
++	sr_session_source_add(sdi->session, -1, 0, 1, litex_slogic_receive_data, (void *)sdi);
++	devc->acq_running = TRUE;
++	return SR_OK;
++}
++
++static int dev_acquisition_stop(struct sr_dev_inst *sdi)
++{
++	struct dev_context *devc = sdi->priv;
++	struct slogic_status st;
++
++	if (!devc->acq_running)
++		return SR_OK; /* Start failed. */
++	devc->acq_running = FALSE;
++	sr_session_source_remove(sdi->session, -1);
++	slogic_capture_stop(devc->dev, &st);
++	if (st.overflow)
++		sr_warn("Capture stopped on overflow after %" PRIu64 " samples.", st.samples);
++	std_session_send_df_end(sdi);
++	if (devc->stl) {
++		soft_trigger_logic_free(devc->stl);
++		devc->stl = NULL;
++	}
++	return SR_OK;
++}
++
++static struct sr_dev_driver litex_slogic_driver_info = {
++	.name = "litex-slogic",
++	.longname = "Sipeed SLogic16U3 (LiteX gateware)",
++	.api_version = 1,
++	.init = std_init,
++	.cleanup = std_cleanup,
++	.scan = scan,
++	.dev_list = std_dev_list,
++	.dev_clear = dev_clear,
++	.config_get = config_get,
++	.config_set = config_set,
++	.config_list = config_list,
++	.dev_open = dev_open,
++	.dev_close = dev_close,
++	.dev_acquisition_start = dev_acquisition_start,
++	.dev_acquisition_stop = dev_acquisition_stop,
++	.context = NULL,
++};
++SR_REGISTER_DEV_DRIVER(litex_slogic_driver_info);
+diff --git a/src/hardware/litex-slogic/libslogic/slogic.c b/src/hardware/litex-slogic/libslogic/slogic.c
+new file mode 100644
+index 00000000..ad03f9fa
+--- /dev/null
++++ b/src/hardware/litex-slogic/libslogic/slogic.c
+@@ -0,0 +1,430 @@
++/* SPDX-License-Identifier: BSD-2-Clause
++ *
++ * libslogic: device, registers, configuration and capture.
++ *
++ * This file is part of SLogic16U3.
++ *
++ * Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++
++#include "slogic.h"
++#include "slogic_internal.h"
++#include "slogic_regs.h"
++
++/* Helpers */
++/*---------*/
++
++const char *slogic_strerror(int err)
++{
++    switch (err) {
++    case SLOGIC_OK:           return "ok";
++    case SLOGIC_ERR_ARG:      return "invalid argument";
++    case SLOGIC_ERR_IO:       return "I/O error";
++    case SLOGIC_ERR_TIMEOUT:  return "timeout";
++    case SLOGIC_ERR_NODEV:    return "no device";
++    case SLOGIC_ERR_DEVICE:   return "unexpected device";
++    case SLOGIC_ERR_OVERFLOW: return "capture overflow (data lost)";
++    case SLOGIC_ERR_END:      return "end of capture";
++    case SLOGIC_ERR_NOMEM:    return "out of memory";
++    case SLOGIC_ERR_FLASH:    return "flash error";
++    default:                  return "error";
++    }
++}
++
++double slogic_time(void)
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return ts.tv_sec + ts.tv_nsec*1e-9;
++}
++
++void slogic_sleep_ms(unsigned ms)
++{
++    struct timespec ts = { ms/1000, (long)(ms % 1000)*1000000L };
++    nanosleep(&ts, NULL);
++}
++
++/* Registers */
++/*-----------*/
++
++int slogic_read_burst(struct slogic_dev *dev, uint32_t addr, uint32_t *vals, size_t count)
++{
++    if (!dev)
++        return SLOGIC_ERR_ARG;
++    return dev->t->read_burst(dev->ctx, addr, vals, count);
++}
++
++int slogic_write_burst(struct slogic_dev *dev, uint32_t addr, const uint32_t *vals, size_t count)
++{
++    if (!dev)
++        return SLOGIC_ERR_ARG;
++    return dev->t->write_burst(dev->ctx, addr, vals, count);
++}
++
++int slogic_read32(struct slogic_dev *dev, uint32_t addr, uint32_t *val)
++{
++    return slogic_read_burst(dev, addr, val, 1);
++}
++
++int slogic_write32(struct slogic_dev *dev, uint32_t addr, uint32_t val)
++{
++    return slogic_write_burst(dev, addr, &val, 1);
++}
++
++int slogic_read64(struct slogic_dev *dev, uint32_t addr, uint64_t *val)
++{
++    uint32_t w[2];
++    int r = slogic_read_burst(dev, addr, w, 2);
++    if (r)
++        return r;
++    *val = ((uint64_t)w[0] << 32) | w[1];
++    return SLOGIC_OK;
++}
++
++int slogic_write64(struct slogic_dev *dev, uint32_t addr, uint64_t val)
++{
++    uint32_t w[2] = { (uint32_t)(val >> 32), (uint32_t)val };
++    return slogic_write_burst(dev, addr, w, 2);
++}
++
++/* Device */
++/*--------*/
++
++static int slogic_read_info(struct slogic_dev *dev)
++{
++    struct slogic_info *info = &dev->info;
++    uint32_t regs[4];
++    uint32_t ident[64];
++    int r;
++
++    memset(info, 0, sizeof(*info));
++    if (dev->t->get_info)
++        dev->t->get_info(dev->ctx, info);
++    if ((r = slogic_read_burst(dev, SLOGIC_ANALYZER_MAGIC, regs, 4)))
++        return r;
++    info->magic      = regs[0];
++    info->version    = regs[1];
++    info->nchannels  = SLOGIC_CONFIG_NCHANNELS(regs[2]);
++    info->ratio      = SLOGIC_CONFIG_RATIO(regs[2]);
++    info->fifo_words = SLOGIC_CONFIG_FIFO_DEPTH(regs[2]);
++    info->base_rate  = regs[3];
++    if (info->magic != SLOGIC_MAGIC || (info->version >> 16) != 1 || !info->ratio)
++        return SLOGIC_ERR_DEVICE;
++
++    /* Identifier: one character per CSR word, NUL terminated. */
++    if ((r = slogic_read_burst(dev, SLOGIC_IDENTIFIER_BASE, ident, 64)))
++        return r;
++    for (size_t i = 0; i < 64 && i < sizeof(info->ident) - 1; i++) {
++        info->ident[i] = (char)(ident[i] & 0xff);
++        if (!info->ident[i])
++            break;
++    }
++    return SLOGIC_OK;
++}
++
++int slogic_open(const char *uri, struct slogic_dev **devp)
++{
++    struct slogic_dev *dev;
++    const char *args;
++    int r;
++
++    if (!devp)
++        return SLOGIC_ERR_ARG;
++    *devp = NULL;
++    if (!uri || !uri[0])
++        uri = "usb";
++    args = strchr(uri, ':');
++    args = args ? args + 1 : "";
++
++    dev = calloc(1, sizeof(*dev));
++    if (!dev)
++        return SLOGIC_ERR_NOMEM;
++    if (!strncmp(uri, "usb", 3))
++        r = slogic_usb_open(args, dev);
++    else if (!strncmp(uri, "sim", 3))
++        r = slogic_sim_open(args, dev);
++    else
++        r = SLOGIC_ERR_ARG;
++    if (r) {
++        free(dev);
++        return r;
++    }
++    if ((r = slogic_read_info(dev))) {
++        slogic_close(dev);
++        return r;
++    }
++    *devp = dev;
++    return SLOGIC_OK;
++}
++
++void slogic_close(struct slogic_dev *dev)
++{
++    if (!dev)
++        return;
++    if (dev->capturing)
++        slogic_capture_stop(dev, NULL);
++    if (dev->t && dev->t->close)
++        dev->t->close(dev->ctx);
++    free(dev);
++}
++
++int slogic_get_info(struct slogic_dev *dev, struct slogic_info *info)
++{
++    if (!dev || !info)
++        return SLOGIC_ERR_ARG;
++    *info = dev->info;
++    return SLOGIC_OK;
++}
++
++int slogic_measure_sample_clock(struct slogic_dev *dev, unsigned duration_ms, double *freq)
++{
++    uint32_t c0, c1, wraps = 0, last;
++    double t0, t1;
++    int r;
++
++    /* Counter read every 10ms at most (32-bit counter: 42s at 100MHz, wraps counted). */
++    if ((r = slogic_read32(dev, SLOGIC_ANALYZER_CLK_COUNT, &c0)))
++        return r;
++    t0   = slogic_time();
++    last = c0;
++    do {
++        slogic_sleep_ms(duration_ms < 10 ? duration_ms : 10);
++        if ((r = slogic_read32(dev, SLOGIC_ANALYZER_CLK_COUNT, &c1)))
++            return r;
++        if (c1 < last)
++            wraps++;
++        last = c1;
++        t1 = slogic_time();
++    } while ((t1 - t0)*1e3 < duration_ms);
++    *freq = (((uint64_t)wraps << 32) + c1 - c0)/(t1 - t0);
++    return SLOGIC_OK;
++}
++
++/* Configuration */
++/*---------------*/
++
++static int slogic_mode(unsigned channels)
++{
++    switch (channels) {
++    case 4:  return SLOGIC_MODE_4CH;
++    case 8:  return SLOGIC_MODE_8CH;
++    case 16: return SLOGIC_MODE_16CH;
++    default: return -1;
++    }
++}
++
++/* Gateware datapath: up to 32 bits per sample clock cycle (ceil(ratio/divider) samples). */
++static int slogic_divider_ok(const struct slogic_info *info, unsigned channels, uint64_t divider)
++{
++    uint64_t kmax = (info->ratio + divider - 1)/divider;
++    return divider >= 1 && divider <= 0xffffffffULL && kmax*channels <= 32;
++}
++
++int slogic_config_check(const struct slogic_info *info, const struct slogic_config *config,
++                        char *msg, size_t msg_size)
++{
++    char dummy[1];
++    if (!msg) {
++        msg      = dummy;
++        msg_size = sizeof(dummy);
++    }
++    msg[0] = '\0';
++    if (!info || !config)
++        return SLOGIC_ERR_ARG;
++    if (slogic_mode(config->channels) < 0) {
++        snprintf(msg, msg_size, "%u channels not supported (4, 8 or 16)", config->channels);
++        return SLOGIC_ERR_ARG;
++    }
++    if (!config->samplerate || info->base_rate % config->samplerate) {
++        snprintf(msg, msg_size, "samplerate %llu Hz is not %llu Hz/N",
++                 (unsigned long long)config->samplerate, (unsigned long long)info->base_rate);
++        return SLOGIC_ERR_ARG;
++    }
++    if (!slogic_divider_ok(info, config->channels, info->base_rate/config->samplerate)) {
++        snprintf(msg, msg_size, "samplerate %llu Hz too high for %u channels (max %llu Hz)",
++                 (unsigned long long)config->samplerate, config->channels,
++                 (unsigned long long)slogic_max_samplerate(info, config->channels));
++        return SLOGIC_ERR_ARG;
++    }
++    if (config->pattern > SLOGIC_PATTERN_COUNTER) {
++        snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
++        return SLOGIC_ERR_ARG;
++    }
++    return SLOGIC_OK;
++}
++
++uint64_t slogic_max_samplerate(const struct slogic_info *info, unsigned channels)
++{
++    for (uint64_t d = 1; d <= info->ratio*4ULL; d++)
++        if (slogic_divider_ok(info, channels, d) && info->base_rate % d == 0)
++            return info->base_rate/d;
++    return 0;
++}
++
++int slogic_samplerates(const struct slogic_info *info, unsigned channels, uint64_t *rates, int max)
++{
++    /* Standard steps (1/2/2.5/4/5/8 x 10^n, from 1kHz), plus base_rate/d for small dividers. */
++    static const unsigned steps[] = { 10, 20, 25, 40, 50, 80 };
++    uint64_t max_rate = slogic_max_samplerate(info, channels);
++    int n = 0;
++
++    for (uint64_t decade = 100; decade <= info->base_rate && n < max; decade *= 10) {
++        for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]) && n < max; i++) {
++            uint64_t rate = decade*steps[i];
++            if (rate > max_rate || info->base_rate % rate)
++                continue;
++            if (n && rates[n - 1] >= rate)
++                continue;
++            rates[n++] = rate;
++        }
++    }
++    /* Highest rates (base/4, base/2, base: not always a standard step, ex: 160MHz = 800MHz/5). */
++    for (uint64_t d = 8; d >= 1 && n < max; d--) {
++        uint64_t rate = info->base_rate/d;
++        if (info->base_rate % d || rate > max_rate || (n && rates[n - 1] >= rate))
++            continue;
++        rates[n++] = rate;
++    }
++    return n;
++}
++
++/* Capture */
++/*---------*/
++
++int slogic_capture_start(struct slogic_dev *dev, const struct slogic_config *config)
++{
++    int r;
++
++    if (!dev || !config)
++        return SLOGIC_ERR_ARG;
++    if ((r = slogic_config_check(&dev->info, config, NULL, 0)))
++        return r;
++    if (dev->capturing)
++        slogic_capture_stop(dev, NULL);
++
++    dev->config      = *config;
++    dev->bytes       = 0;
++    dev->ended       = 0;
++    dev->bytes_limit = config->limit ? 8*((slogic_packed_bytes(config->channels, config->limit) + 7)/8) : 0;
++
++    /* Stopped, configured, stream started (stale data flushed), then enabled. */
++    uint32_t control = SLOGIC_CONTROL_MODE(slogic_mode(config->channels)) |
++                       SLOGIC_CONTROL_PATTERN(config->pattern);
++    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control)))
++        return r;
++    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_DIVIDER, (uint32_t)(dev->info.base_rate/config->samplerate))))
++        return r;
++    if ((r = slogic_write64(dev, SLOGIC_ANALYZER_LIMIT, config->limit)))
++        return r;
++    if ((r = dev->t->stream_start(dev->ctx)))
++        return r;
++    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control | SLOGIC_CONTROL_ENABLE)))
++        return r;
++    dev->capturing = 1;
++    return SLOGIC_OK;
++}
++
++int slogic_capture_read(struct slogic_dev *dev, const uint8_t **data, size_t *size, int timeout_ms)
++{
++    int last = 0;
++    int r;
++
++    if (!dev || !data || !size)
++        return SLOGIC_ERR_ARG;
++    if (!dev->capturing || dev->ended)
++        return SLOGIC_ERR_END;
++    r = dev->t->stream_read(dev->ctx, data, size, &last, timeout_ms);
++    if (r)
++        return r;
++    dev->bytes += *size;
++    /* With a limit, the data beyond the limit (padding of the last word) is not returned. */
++    if (dev->bytes_limit && dev->bytes >= dev->bytes_limit) {
++        uint64_t keep = slogic_packed_bytes(dev->config.channels, dev->config.limit);
++        uint64_t prev = dev->bytes - *size;
++        *size = keep > prev ? (size_t)(keep - prev) : 0;
++        dev->ended = 1;
++    }
++    if (last && !dev->ended) {
++        /* Stream ended before the limit (stopped/overflow): status tells why. */
++        struct slogic_status st;
++        dev->ended = 1;
++        if (!slogic_capture_status(dev, &st) && st.overflow)
++            return *size ? SLOGIC_OK : SLOGIC_ERR_OVERFLOW;
++    }
++    return SLOGIC_OK;
++}
++
++int slogic_capture_status(struct slogic_dev *dev, struct slogic_status *st)
++{
++    uint32_t status;
++    int r;
++
++    if (!dev || !st)
++        return SLOGIC_ERR_ARG;
++    memset(st, 0, sizeof(*st));
++    if ((r = slogic_read32(dev, SLOGIC_ANALYZER_STATUS, &status)))
++        return r;
++    if ((r = slogic_read64(dev, SLOGIC_ANALYZER_COUNT, &st->samples)))
++        return r;
++    st->running  = !!(status & SLOGIC_STATUS_RUNNING);
++    st->done     = !!(status & SLOGIC_STATUS_DONE);
++    st->overflow = !!(status & SLOGIC_STATUS_OVERFLOW);
++    st->error    = !!(status & SLOGIC_STATUS_ERROR);
++    st->bytes    = dev->bytes;
++    return SLOGIC_OK;
++}
++
++int slogic_capture_stop(struct slogic_dev *dev, struct slogic_status *st)
++{
++    uint32_t control;
++    int r;
++
++    if (!dev)
++        return SLOGIC_ERR_ARG;
++    if ((r = slogic_read32(dev, SLOGIC_ANALYZER_CONTROL, &control)))
++        return r;
++    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control & ~SLOGIC_CONTROL_ENABLE)))
++        return r;
++    dev->t->stream_stop(dev->ctx);
++    dev->capturing = 0;
++    if (st)
++        return slogic_capture_status(dev, st);
++    return SLOGIC_OK;
++}
++
++/* Data */
++/*------*/
++
++unsigned slogic_unitsize(unsigned channels)
++{
++    return channels > 8 ? 2 : 1;
++}
++
++uint64_t slogic_packed_bytes(unsigned channels, uint64_t nsamples)
++{
++    return (nsamples*channels + 7)/8;
++}
++
++void slogic_unpack(unsigned channels, const uint8_t *data, uint64_t first, uint64_t nsamples, uint8_t *out)
++{
++    switch (channels) {
++    case 4:
++        for (uint64_t i = 0; i < nsamples; i++) {
++            uint64_t s = first + i;
++            out[i] = (data[(s - (first & ~1ULL))/2] >> (4*(s & 1))) & 0xf;
++        }
++        break;
++    case 8:
++        memcpy(out, data, nsamples);
++        break;
++    default:
++        memcpy(out, data, 2*nsamples);
++        break;
++    }
++}
+diff --git a/src/hardware/litex-slogic/libslogic/slogic.h b/src/hardware/litex-slogic/libslogic/slogic.h
+new file mode 100644
+index 00000000..a83115b3
+--- /dev/null
++++ b/src/hardware/litex-slogic/libslogic/slogic.h
+@@ -0,0 +1,168 @@
++/* SPDX-License-Identifier: BSD-2-Clause
++ *
++ * libslogic: SLogic16U3 (LiteX gateware) host library.
++ *
++ * Device access over USB3 (EP0: SoC/CSR accesses, Bulk IN: capture data), or a simulated device
++ * (software model of the gateware, for tests/development without hardware):
++ *
++ *   slogic_open("usb", &dev)  / slogic_open("usb:serial=0001", &dev) / slogic_open("sim", &dev)
++ *   slogic_get_info(dev, &info)
++ *   slogic_capture_start(dev, &config)
++ *   while (slogic_capture_read(dev, &data, &size, timeout_ms) == SLOGIC_OK) ...
++ *   slogic_capture_stop(dev, &status)
++ *   slogic_close(dev)
++ *
++ * Capture data: sample-major packed samples, first sample on the LSBs (4 channels: 2 samples per byte,
++ * 8 channels: 1 byte, 16 channels: 2 bytes little-endian per sample), see slogic_unpack().
++ *
++ * This file is part of SLogic16U3.
++ *
++ * Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ */
++
++#ifndef SLOGIC_H
++#define SLOGIC_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define SLOGIC_VERSION_STRING "0.1.0"
++
++/* Errors */
++/*--------*/
++
++enum {
++    SLOGIC_OK           =  0,
++    SLOGIC_ERR          = -1,
++    SLOGIC_ERR_ARG      = -2, /* Invalid argument/configuration. */
++    SLOGIC_ERR_IO       = -3, /* Transport error. */
++    SLOGIC_ERR_TIMEOUT  = -4,
++    SLOGIC_ERR_NODEV    = -5, /* No device found. */
++    SLOGIC_ERR_DEVICE   = -6, /* Unexpected device (magic/version). */
++    SLOGIC_ERR_OVERFLOW = -7, /* Capture data lost (host too slow). */
++    SLOGIC_ERR_END      = -8, /* End of the capture (no more data). */
++    SLOGIC_ERR_NOMEM    = -9,
++    SLOGIC_ERR_FLASH    = -10,
++};
++
++const char *slogic_strerror(int err);
++
++/* Device */
++/*--------*/
++
++struct slogic_dev;
++
++struct slogic_info {
++    uint32_t magic;
++    uint32_t version;          /* Gateware version: major[31:16], minor[15:0]. */
++    unsigned nchannels;        /* Physical channels (16). */
++    unsigned ratio;            /* Samples per sample clock cycle (8). */
++    uint64_t base_rate;        /* Base samplerate (Hz): samplerates are base_rate/divider. */
++    unsigned fifo_words;       /* Capture FIFO (64-bit words). */
++    char     ident[256];       /* SoC identifier (with the build date). */
++    char     transport[16];    /* "usb", "sim". */
++    char     serial[64];       /* USB serial number. */
++    int      usb_speed;        /* USB speed (Mb/s: 5000). */
++};
++
++/* uri: "usb[:serial=<s>][,path=<bus-ports>]", "sim" (NULL: "usb"). */
++int  slogic_open(const char *uri, struct slogic_dev **dev);
++void slogic_close(struct slogic_dev *dev);
++int  slogic_get_info(struct slogic_dev *dev, struct slogic_info *info);
++
++/* Raw SoC/CSR accesses (byte addresses, 32-bit words, see slogic_regs.h). */
++int slogic_read32(struct slogic_dev *dev, uint32_t addr, uint32_t *val);
++int slogic_write32(struct slogic_dev *dev, uint32_t addr, uint32_t val);
++int slogic_read64(struct slogic_dev *dev, uint32_t addr, uint64_t *val);   /* 64-bit CSR (MSW first). */
++int slogic_write64(struct slogic_dev *dev, uint32_t addr, uint64_t val);
++int slogic_read_burst(struct slogic_dev *dev, uint32_t addr, uint32_t *vals, size_t count);
++int slogic_write_burst(struct slogic_dev *dev, uint32_t addr, const uint32_t *vals, size_t count);
++
++/* Monotonic host time (seconds). */
++double slogic_time(void);
++
++/* Sample clock frequency (Hz) measured against the host clock over duration_ms. */
++int slogic_measure_sample_clock(struct slogic_dev *dev, unsigned duration_ms, double *freq);
++
++/* Capture */
++/*---------*/
++
++struct slogic_config {
++    uint64_t samplerate;       /* Hz: base_rate/divider. */
++    unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
++    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
++    unsigned pattern;          /* 0: inputs, 1: counter test pattern. */
++};
++
++struct slogic_status {
++    int      running;
++    int      done;
++    int      overflow;         /* Data lost (host too slow): capture stopped. */
++    int      error;            /* Invalid configuration. */
++    uint64_t samples;          /* Captured samples. */
++    uint64_t bytes;            /* Bytes received by the host. */
++};
++
++/* Configuration check: SLOGIC_OK or SLOGIC_ERR_ARG (msg: reason, may be NULL). */
++int slogic_config_check(const struct slogic_info *info, const struct slogic_config *config,
++                        char *msg, size_t msg_size);
++/* Supported samplerates for a channel count (ascending), returns the number of rates (<= max). */
++int slogic_samplerates(const struct slogic_info *info, unsigned channels, uint64_t *rates, int max);
++/* Maximum samplerate supported by the gateware datapath for a channel count. */
++uint64_t slogic_max_samplerate(const struct slogic_info *info, unsigned channels);
++
++int slogic_capture_start(struct slogic_dev *dev, const struct slogic_config *config);
++/* Next data buffer (valid until the next call): SLOGIC_OK, SLOGIC_ERR_TIMEOUT, SLOGIC_ERR_END (capture
++ * done, all data read), SLOGIC_ERR_OVERFLOW or a transport error. */
++int slogic_capture_read(struct slogic_dev *dev, const uint8_t **data, size_t *size, int timeout_ms);
++int slogic_capture_stop(struct slogic_dev *dev, struct slogic_status *status);
++int slogic_capture_status(struct slogic_dev *dev, struct slogic_status *status);
++
++/* Data */
++/*------*/
++
++/* Bytes per sample once unpacked (1 for 4/8 channels, 2 for 16 channels). */
++unsigned slogic_unitsize(unsigned channels);
++/* Bytes of packed data holding nsamples samples. */
++uint64_t slogic_packed_bytes(unsigned channels, uint64_t nsamples);
++/* Unpack nsamples samples from packed data (starting at sample index first of data, so streams can be
++ * unpacked buffer by buffer) to unitsize bytes per sample. */
++void slogic_unpack(unsigned channels, const uint8_t *data, uint64_t first, uint64_t nsamples, uint8_t *out);
++
++/* Flash (configuration SPI Flash, remote update) */
++/*-----------------------------------------------*/
++
++#define SLOGIC_FLASH_APP_BASE    0x000000
++#define SLOGIC_FLASH_APP_SIZE    0x800000 /* Application region (the DFU loader is above, never written). */
++#define SLOGIC_FLASH_SECTOR      4096
++#define SLOGIC_FLASH_PAGE        256
++
++struct slogic_flash_pins {
++    unsigned clk, cs_n, mosi, miso; /* Pad indexes (0-5: K13, K14, L14, L13, M14, M13). */
++};
++
++/* Find the pads mapping (JEDEC ID read with each mapping), jedec: 3 bytes (may be NULL). */
++int slogic_flash_probe(struct slogic_dev *dev, struct slogic_flash_pins *pins, uint8_t jedec[3]);
++int slogic_flash_open(struct slogic_dev *dev, const struct slogic_flash_pins *pins); /* NULL: default/probed. */
++int slogic_flash_close(struct slogic_dev *dev);
++int slogic_flash_jedec_id(struct slogic_dev *dev, uint8_t jedec[3]);
++int slogic_flash_read(struct slogic_dev *dev, uint32_t addr, uint8_t *data, size_t size);
++/* Erase/program in the application region only (addr + size <= SLOGIC_FLASH_APP_SIZE). */
++int slogic_flash_erase(struct slogic_dev *dev, uint32_t addr, size_t size);
++int slogic_flash_write(struct slogic_dev *dev, uint32_t addr, const uint8_t *data, size_t size);
++
++typedef void (*slogic_progress_cb)(const char *step, size_t done, size_t total, void *user);
++/* Application update: erase, program and verify image at 0x000000 (replug to boot it). */
++int slogic_flash_update(struct slogic_dev *dev, const uint8_t *image, size_t size,
++                        slogic_progress_cb progress, void *user);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* SLOGIC_H */
+diff --git a/src/hardware/litex-slogic/libslogic/slogic_internal.h b/src/hardware/litex-slogic/libslogic/slogic_internal.h
+new file mode 100644
+index 00000000..efde1d4c
+--- /dev/null
++++ b/src/hardware/litex-slogic/libslogic/slogic_internal.h
+@@ -0,0 +1,55 @@
++/* SPDX-License-Identifier: BSD-2-Clause
++ *
++ * libslogic internals: transports (USB, simulated device).
++ *
++ * This file is part of SLogic16U3.
++ *
++ * Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ */
++
++#ifndef SLOGIC_INTERNAL_H
++#define SLOGIC_INTERNAL_H
++
++#include "slogic.h"
++
++/* Transport */
++/*-----------*/
++
++struct slogic_transport {
++    const char *name;
++    /* SoC bus (byte addresses, 32-bit words). */
++    int  (*read_burst)(void *ctx, uint32_t addr, uint32_t *vals, size_t count);
++    int  (*write_burst)(void *ctx, uint32_t addr, const uint32_t *vals, size_t count);
++    /* Capture data stream (Bulk IN): start (stale data flushed), next buffer, stop. A short buffer
++     * (size < requested) ends the stream (gateware `last`: capture done). */
++    int  (*stream_start)(void *ctx);
++    int  (*stream_read)(void *ctx, const uint8_t **data, size_t *size, int *last, int timeout_ms);
++    int  (*stream_stop)(void *ctx);
++    void (*close)(void *ctx);
++    /* Info. */
++    void (*get_info)(void *ctx, struct slogic_info *info);
++};
++
++struct slogic_dev {
++    const struct slogic_transport *t;
++    void *ctx;
++    struct slogic_info info;
++    /* Capture state. */
++    struct slogic_config config;
++    int      capturing;
++    int      ended;
++    uint64_t bytes;
++    uint64_t bytes_limit;   /* Packed bytes of the capture (limit), 0: continuous. */
++    /* Flash state. */
++    int      flash_open;
++    uint32_t flash_control;
++};
++
++/* Transports */
++int slogic_usb_open(const char *args, struct slogic_dev *dev);
++int slogic_sim_open(const char *args, struct slogic_dev *dev);
++
++void slogic_sleep_ms(unsigned ms);
++
++#endif /* SLOGIC_INTERNAL_H */
+diff --git a/src/hardware/litex-slogic/libslogic/slogic_regs.h b/src/hardware/litex-slogic/libslogic/slogic_regs.h
+new file mode 100644
+index 00000000..fdfd79cc
+--- /dev/null
++++ b/src/hardware/litex-slogic/libslogic/slogic_regs.h
+@@ -0,0 +1,100 @@
++/* SPDX-License-Identifier: BSD-2-Clause
++ *
++ * SLogic16U3 gateware registers (fixed CSR map, slogic_16u3.py csr_map, checked against the generated
++ * csr.csv by test/test_regs.py).
++ *
++ * This file is part of SLogic16U3.
++ *
++ * Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ */
++
++#ifndef SLOGIC_REGS_H
++#define SLOGIC_REGS_H
++
++/* Bus */
++/*-----*/
++
++#define SLOGIC_CSR_BASE              0x00000000
++#define SLOGIC_FLASH_BUFFER_BASE     0x20000000
++#define SLOGIC_FLASH_BUFFER_SIZE     512
++
++/* CSR banks (64-bit registers: two 32-bit words, most significant first). */
++#define SLOGIC_CTRL_BASE             0x0000
++#define SLOGIC_ANALYZER_BASE         0x0800
++#define SLOGIC_FLASH_BASE            0x1000
++#define SLOGIC_USB3_PHY_BASE         0x1800
++#define SLOGIC_IDENTIFIER_BASE       0x2000
++#define SLOGIC_IDENTIFIER_SIZE       256
++
++/* Ctrl */
++/*------*/
++
++#define SLOGIC_CTRL_RESET            (SLOGIC_CTRL_BASE + 0x00)
++#define SLOGIC_CTRL_SCRATCH          (SLOGIC_CTRL_BASE + 0x04)
++#define SLOGIC_CTRL_BUS_ERRORS       (SLOGIC_CTRL_BASE + 0x08)
++
++/* Analyzer */
++/*----------*/
++
++#define SLOGIC_ANALYZER_MAGIC        (SLOGIC_ANALYZER_BASE + 0x00)
++#define SLOGIC_ANALYZER_VERSION      (SLOGIC_ANALYZER_BASE + 0x04)
++#define SLOGIC_ANALYZER_CONFIG       (SLOGIC_ANALYZER_BASE + 0x08)
++#define SLOGIC_ANALYZER_BASE_RATE    (SLOGIC_ANALYZER_BASE + 0x0c)
++#define SLOGIC_ANALYZER_CONTROL      (SLOGIC_ANALYZER_BASE + 0x10)
++#define SLOGIC_ANALYZER_DIVIDER      (SLOGIC_ANALYZER_BASE + 0x14)
++#define SLOGIC_ANALYZER_LIMIT        (SLOGIC_ANALYZER_BASE + 0x18) /* 64-bit. */
++#define SLOGIC_ANALYZER_STATUS       (SLOGIC_ANALYZER_BASE + 0x20)
++#define SLOGIC_ANALYZER_COUNT        (SLOGIC_ANALYZER_BASE + 0x24) /* 64-bit. */
++#define SLOGIC_ANALYZER_CLK_COUNT    (SLOGIC_ANALYZER_BASE + 0x2c)
++
++#define SLOGIC_MAGIC                 0x534c4f47 /* "SLOG". */
++
++#define SLOGIC_CONFIG_NCHANNELS(c)   (((c) >>  0) & 0xff)
++#define SLOGIC_CONFIG_RATIO(c)       (((c) >>  8) & 0xff)
++#define SLOGIC_CONFIG_FIFO_DEPTH(c)  ((((c) >> 16) & 0xffff)*64) /* 64-bit words. */
++
++#define SLOGIC_CONTROL_ENABLE        (1 << 0)
++#define SLOGIC_CONTROL_MODE(m)       (((m) & 0x3) << 4)
++#define SLOGIC_CONTROL_PATTERN(p)    (((p) & 0x3) << 8)
++
++#define SLOGIC_MODE_4CH              0
++#define SLOGIC_MODE_8CH              1
++#define SLOGIC_MODE_16CH             2
++
++#define SLOGIC_PATTERN_INPUTS        0
++#define SLOGIC_PATTERN_COUNTER       1
++
++#define SLOGIC_STATUS_RUNNING        (1 << 0)
++#define SLOGIC_STATUS_DONE           (1 << 1)
++#define SLOGIC_STATUS_OVERFLOW       (1 << 2)
++#define SLOGIC_STATUS_ERROR          (1 << 3)
++
++/* Flash */
++/*-------*/
++
++#define SLOGIC_FLASH_CONTROL         (SLOGIC_FLASH_BASE + 0x00)
++#define SLOGIC_FLASH_DIVIDER         (SLOGIC_FLASH_BASE + 0x04)
++#define SLOGIC_FLASH_XFER            (SLOGIC_FLASH_BASE + 0x08)
++#define SLOGIC_FLASH_CTRL            (SLOGIC_FLASH_BASE + 0x0c)
++#define SLOGIC_FLASH_STATUS          (SLOGIC_FLASH_BASE + 0x10)
++
++#define SLOGIC_FLASH_CONTROL_ENABLE  (1 << 0)
++#define SLOGIC_FLASH_CONTROL_PINS(clk, cs_n, mosi, miso) \
++    ((((clk) & 7) << 4) | (((cs_n) & 7) << 8) | (((mosi) & 7) << 12) | (((miso) & 7) << 16))
++#define SLOGIC_FLASH_CONTROL_HIGH(m) (((m) & 0xff) << 20)
++#define SLOGIC_FLASH_XFER_HOLD       (1 << 16)
++#define SLOGIC_FLASH_CTRL_START      (1 << 0)
++#define SLOGIC_FLASH_CTRL_RELEASE    (1 << 1)
++#define SLOGIC_FLASH_STATUS_BUSY     (1 << 0)
++#define SLOGIC_FLASH_NPADS           6
++
++/* USB3 PHY */
++/*----------*/
++
++#define SLOGIC_USB3_PHY_STATUS       (SLOGIC_USB3_PHY_BASE + 0x00)
++#define SLOGIC_USB3_PHY_LTSSM(s)     ((s) & 0xff)
++#define SLOGIC_USB3_PHY_U0           (1 << 8)
++#define SLOGIC_USB3_PHY_READY        (1 << 9)
++
++#endif /* SLOGIC_REGS_H */
+diff --git a/src/hardware/litex-slogic/libslogic/slogic_sim.c b/src/hardware/litex-slogic/libslogic/slogic_sim.c
+new file mode 100644
+index 00000000..ac6fa298
+--- /dev/null
++++ b/src/hardware/litex-slogic/libslogic/slogic_sim.c
+@@ -0,0 +1,471 @@
++/* SPDX-License-Identifier: BSD-2-Clause
++ *
++ * libslogic: simulated device (software model of the gateware), for tests and development without
++ * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
++ *
++ * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
++ * - Capture stream: counter test pattern (sample i = i*divider, as the gateware) or synthetic inputs (CHn:
++ *   square wave toggling every 2^(n+2) base samples), packed as the gateware (32-bit packer, last word
++ *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
++ *   (overflow when the capture needs more, after the FIFO).
++ * - Flash: 16MB SPI Flash (W25Q128-like: JEDEC ID ef 40 18) on hidden pads (pins), golden image area
++ *   (0x800000-) filled with 0xa5.
++ *
++ * This file is part of SLogic16U3.
++ *
++ * Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "slogic.h"
++#include "slogic_internal.h"
++#include "slogic_regs.h"
++
++/* Constants */
++/*-----------*/
++
++#define SIM_BASE_RATE   800000000ULL
++#define SIM_SAMPLE_CLK  100000000ULL
++#define SIM_RATIO       8
++#define SIM_FIFO_WORDS  512
++#define SIM_BUF_SIZE    (256*1024)
++#define SIM_FLASH_SIZE  (16*1024*1024)
++#define SIM_IDENT       "SLogic16U3 LiteX (simulated device)"
++
++/* Context */
++/*---------*/
++
++struct sim_flash {
++    uint8_t *mem;
++    int      cs;          /* Selected. */
++    uint8_t  cmd[4 + SLOGIC_FLASH_BUFFER_SIZE];
++    size_t   n;           /* Bytes received since CS asserted. */
++    int      wel;
++};
++
++struct sim {
++    /* Analyzer. */
++    uint32_t control, divider, status;
++    uint64_t limit, count;
++    double   t0;
++    /* Stream. */
++    int      streaming, ended, overflow_after_words;
++    uint64_t sample;      /* Next captured sample index. */
++    uint64_t bits;        /* Bits sent. */
++    uint8_t  buf[SIM_BUF_SIZE + 16];
++    uint64_t pack;        /* Packer. */
++    unsigned pack_bits;
++    double   rate;        /* Emulated host bandwidth (bytes/s, 0: unlimited). */
++    double   t_start;     /* Capture start (data paced at the samplerate). */
++    int      realtime;    /* Data paced at the samplerate (default, "fast" disables it). */
++    uint64_t words_sent;  /* 32-bit words. */
++    /* Flash. */
++    uint32_t flash_control, flash_divider, flash_xfer;
++    uint8_t  tx[SLOGIC_FLASH_BUFFER_SIZE], rx[SLOGIC_FLASH_BUFFER_SIZE];
++    unsigned pins[4];
++    struct sim_flash flash;
++    int      flash_writes_golden; /* Golden area writes (must stay 0). */
++};
++
++/* Flash Model */
++/*-------------*/
++
++static uint8_t sim_flash_byte(struct sim *s, uint8_t b)
++{
++    struct sim_flash *f = &s->flash;
++    uint8_t out = 0xff;
++    size_t n = f->n;
++
++    if (n < sizeof(f->cmd))
++        f->cmd[n] = b;
++    f->n++;
++    if (n == 0)
++        return 0xff;
++    switch (f->cmd[0]) {
++    case 0x9f: { static const uint8_t id[3] = { 0xef, 0x40, 0x18 }; out = n <= 3 ? id[n - 1] : 0x00; break; }
++    case 0x05: out = (uint8_t)(f->wel << 1); break;
++    case 0x5a: { static const char sig[4] = { 'S', 'F', 'D', 'P' }; out = (n >= 5 && n < 9) ? (uint8_t)sig[n - 5] : 0x00; break; }
++    case 0x03:
++        if (n >= 4) {
++            uint32_t addr = (f->cmd[1] << 16) | (f->cmd[2] << 8) | f->cmd[3];
++            out = f->mem[(addr + n - 4) % SIM_FLASH_SIZE];
++        }
++        break;
++    }
++    return out;
++}
++
++static void sim_flash_deselect(struct sim *s)
++{
++    struct sim_flash *f = &s->flash;
++    size_t n = f->n < sizeof(f->cmd) ? f->n : sizeof(f->cmd);
++
++    if (!f->cs)
++        return;
++    f->cs = 0;
++    if (!n)
++        return;
++    switch (f->cmd[0]) {
++    case 0x06: f->wel = 1; break;
++    case 0x04: f->wel = 0; break;
++    case 0x02:
++        if (f->wel && n > 4) {
++            uint32_t addr = (f->cmd[1] << 16) | (f->cmd[2] << 8) | f->cmd[3];
++            for (size_t i = 4; i < n; i++) {
++                uint32_t a = (addr & ~0xffu) | ((addr + i - 4) & 0xff);
++                if (a >= SLOGIC_FLASH_APP_SIZE)
++                    s->flash_writes_golden++;
++                f->mem[a % SIM_FLASH_SIZE] &= f->cmd[i];
++            }
++        }
++        f->wel = 0;
++        break;
++    case 0x20: case 0x52: case 0xd8:
++        if (f->wel && n == 4) {
++            uint32_t size = f->cmd[0] == 0x20 ? 4096 : f->cmd[0] == 0x52 ? 32768 : 65536;
++            uint32_t addr = ((f->cmd[1] << 16) | (f->cmd[2] << 8) | f->cmd[3]) & ~(size - 1);
++            if (addr >= SLOGIC_FLASH_APP_SIZE)
++                s->flash_writes_golden++;
++            memset(&f->mem[addr % SIM_FLASH_SIZE], 0xff, size);
++        }
++        f->wel = 0;
++        break;
++    }
++}
++
++static void sim_flash_xfer(struct sim *s)
++{
++    unsigned length = s->flash_xfer & 0xffff;
++    int hold = !!(s->flash_xfer & SLOGIC_FLASH_XFER_HOLD);
++    unsigned clk  = (s->flash_control >> 4) & 7;
++    unsigned cs_n = (s->flash_control >> 8) & 7;
++    unsigned mosi = (s->flash_control >> 12) & 7;
++    unsigned miso = (s->flash_control >> 16) & 7;
++    int connected = (s->flash_control & SLOGIC_FLASH_CONTROL_ENABLE) && clk == s->pins[0] &&
++                    cs_n == s->pins[1] && mosi == s->pins[2] && miso == s->pins[3];
++
++    if (length > SLOGIC_FLASH_BUFFER_SIZE)
++        length = SLOGIC_FLASH_BUFFER_SIZE;
++    if (connected && !s->flash.cs) {
++        s->flash.cs = 1;
++        s->flash.n  = 0;
++    }
++    for (unsigned i = 0; i < length; i++)
++        s->rx[i] = connected ? sim_flash_byte(s, s->tx[i]) : 0xff;
++    if (!hold)
++        sim_flash_deselect(s);
++}
++
++/* Capture Model */
++/*---------------*/
++
++static unsigned sim_channels(const struct sim *s)
++{
++    switch ((s->control >> 4) & 3) {
++    case SLOGIC_MODE_4CH: return 4;
++    case SLOGIC_MODE_8CH: return 8;
++    default:              return 16;
++    }
++}
++
++static uint16_t sim_sample(const struct sim *s, uint64_t i)
++{
++    uint64_t t = i*(s->divider ? s->divider : 1); /* Base sample index. */
++    if (((s->control >> 8) & 3) == SLOGIC_PATTERN_COUNTER)
++        return (uint16_t)t;
++    return (uint16_t)(t >> 2);                   /* CHn toggles every 2^(n+2) base samples. */
++}
++
++static void sim_start(struct sim *s)
++{
++    unsigned ch = sim_channels(s);
++    double need = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1)*ch/8;
++
++    s->sample     = 0;
++    s->count      = 0;
++    s->pack       = 0;
++    s->pack_bits  = 0;
++    s->words_sent = 0;
++    s->ended      = 0;
++    s->status     = SLOGIC_STATUS_RUNNING;
++    s->t_start    = slogic_time();
++    /* Invalid configuration: more than 32 bits per sample clock cycle. */
++    unsigned d = s->divider ? s->divider : 1;
++    if (((SIM_RATIO + d - 1)/d)*ch > 32) {
++        s->status = SLOGIC_STATUS_DONE | SLOGIC_STATUS_ERROR;
++        s->overflow_after_words = 1;
++        return;
++    }
++    /* Host too slow: FIFO filled then overflow. */
++    s->overflow_after_words = (s->rate > 0 && need > s->rate) ? 2*SIM_FIFO_WORDS + 4096 : -1;
++}
++
++/* Generate up to max bytes (multiple of 8), returns the size, *last at the end of the capture. */
++static size_t sim_generate(struct sim *s, uint8_t *out, size_t max, int *last)
++{
++    unsigned ch = sim_channels(s);
++    int running = !!(s->status & SLOGIC_STATUS_RUNNING);
++    size_t n = 0;
++
++    *last = 0;
++    while (n + 8 <= max) {
++        /* Packer: fill 32 bits, two 32-bit words per 64-bit data word. */
++        uint32_t w[2];
++        int words = 0, flush = 0;
++        for (int k = 0; k < 2; k++) {
++            while (running && s->pack_bits < 32) {
++                if (s->limit && s->sample >= s->limit) {
++                    running = 0;
++                    break;
++                }
++                if (s->overflow_after_words >= 0 && s->words_sent >= (uint64_t)s->overflow_after_words) {
++                    running = 0;
++                    s->status |= SLOGIC_STATUS_OVERFLOW;
++                    break;
++                }
++                s->pack |= (uint64_t)(sim_sample(s, s->sample) & ((1u << ch) - 1)) << s->pack_bits;
++                s->pack_bits += ch;
++                s->sample++;
++                s->count++;
++            }
++            if (s->pack_bits >= 32) {
++                w[k] = (uint32_t)s->pack;
++                s->pack >>= 32;
++                s->pack_bits -= 32;
++                words++;
++                s->words_sent++;
++            } else {
++                /* Flushed last word (padded, possibly empty). */
++                w[k] = (uint32_t)s->pack;
++                s->pack = 0;
++                s->pack_bits = 0;
++                words++;
++                flush = 1;
++                break;
++            }
++        }
++        for (int k = 0; k < 2; k++) {
++            uint32_t v = k < words ? w[k] : 0;
++            for (int b = 0; b < 4; b++)
++                out[n + 4*k + b] = (uint8_t)(v >> (8*b));
++        }
++        n += 8;
++        if (flush) {
++            *last = 1;
++            s->status &= ~SLOGIC_STATUS_RUNNING;
++            s->status |= SLOGIC_STATUS_DONE;
++            break;
++        }
++    }
++    return n;
++}
++
++/* Bus */
++/*-----*/
++
++static uint32_t sim_read(struct sim *s, uint32_t addr)
++{
++    if (addr >= SLOGIC_FLASH_BUFFER_BASE && addr < SLOGIC_FLASH_BUFFER_BASE + SLOGIC_FLASH_BUFFER_SIZE) {
++        uint32_t o = addr - SLOGIC_FLASH_BUFFER_BASE;
++        return s->rx[o] | s->rx[o + 1] << 8 | s->rx[o + 2] << 16 | (uint32_t)s->rx[o + 3] << 24;
++    }
++    if (addr >= SLOGIC_IDENTIFIER_BASE && addr < SLOGIC_IDENTIFIER_BASE + 4*SLOGIC_IDENTIFIER_SIZE) {
++        size_t i = (addr - SLOGIC_IDENTIFIER_BASE)/4;
++        return i < sizeof(SIM_IDENT) ? (uint8_t)SIM_IDENT[i] : 0;
++    }
++    switch (addr) {
++    case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
++    case SLOGIC_ANALYZER_VERSION:   return 0x00010000;
++    case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
++    case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
++    case SLOGIC_ANALYZER_CONTROL:   return s->control;
++    case SLOGIC_ANALYZER_DIVIDER:   return s->divider;
++    case SLOGIC_ANALYZER_LIMIT:     return (uint32_t)(s->limit >> 32);
++    case SLOGIC_ANALYZER_LIMIT + 4: return (uint32_t)s->limit;
++    case SLOGIC_ANALYZER_STATUS:    return s->status;
++    case SLOGIC_ANALYZER_COUNT:     return (uint32_t)(s->count >> 32);
++    case SLOGIC_ANALYZER_COUNT + 4: return (uint32_t)s->count;
++    case SLOGIC_ANALYZER_CLK_COUNT: return (uint32_t)((slogic_time() - s->t0)*SIM_SAMPLE_CLK);
++    case SLOGIC_FLASH_CONTROL:      return s->flash_control;
++    case SLOGIC_FLASH_DIVIDER:      return s->flash_divider;
++    case SLOGIC_FLASH_XFER:         return s->flash_xfer;
++    case SLOGIC_FLASH_STATUS:       return 0;
++    case SLOGIC_USB3_PHY_STATUS:    return SLOGIC_USB3_PHY_U0 | SLOGIC_USB3_PHY_READY | 0x0b;
++    default:                        return 0;
++    }
++}
++
++static void sim_write(struct sim *s, uint32_t addr, uint32_t val)
++{
++    if (addr >= SLOGIC_FLASH_BUFFER_BASE && addr < SLOGIC_FLASH_BUFFER_BASE + SLOGIC_FLASH_BUFFER_SIZE) {
++        uint32_t o = addr - SLOGIC_FLASH_BUFFER_BASE;
++        for (int b = 0; b < 4; b++)
++            s->tx[o + b] = (uint8_t)(val >> (8*b));
++        return;
++    }
++    switch (addr) {
++    case SLOGIC_ANALYZER_CONTROL: {
++        int rising  = (val & SLOGIC_CONTROL_ENABLE) && !(s->control & SLOGIC_CONTROL_ENABLE);
++        int falling = !(val & SLOGIC_CONTROL_ENABLE) && (s->control & SLOGIC_CONTROL_ENABLE);
++        s->control = val;
++        if (rising)
++            sim_start(s);
++        if (falling)
++            s->status &= ~SLOGIC_STATUS_RUNNING; /* Flushed by the generator (last). */
++        break;
++    }
++    case SLOGIC_ANALYZER_DIVIDER:   s->divider = val; break;
++    case SLOGIC_ANALYZER_LIMIT:     s->limit = (s->limit & 0xffffffffULL) | (uint64_t)val << 32; break;
++    case SLOGIC_ANALYZER_LIMIT + 4: s->limit = (s->limit & ~0xffffffffULL) | val; break;
++    case SLOGIC_FLASH_CONTROL:
++        s->flash_control = val;
++        if (!(val & SLOGIC_FLASH_CONTROL_ENABLE))
++            sim_flash_deselect(s);
++        break;
++    case SLOGIC_FLASH_DIVIDER: s->flash_divider = val; break;
++    case SLOGIC_FLASH_XFER:    s->flash_xfer = val; break;
++    case SLOGIC_FLASH_CTRL:
++        if (val & SLOGIC_FLASH_CTRL_START)
++            sim_flash_xfer(s);
++        if (val & SLOGIC_FLASH_CTRL_RELEASE)
++            sim_flash_deselect(s);
++        break;
++    }
++}
++
++static int sim_read_burst(void *ctx, uint32_t addr, uint32_t *vals, size_t count)
++{
++    for (size_t i = 0; i < count; i++)
++        vals[i] = sim_read(ctx, addr + 4*i);
++    return SLOGIC_OK;
++}
++
++static int sim_write_burst(void *ctx, uint32_t addr, const uint32_t *vals, size_t count)
++{
++    for (size_t i = 0; i < count; i++)
++        sim_write(ctx, addr + 4*i, vals[i]);
++    return SLOGIC_OK;
++}
++
++/* Stream */
++/*--------*/
++
++static int sim_stream_start(void *ctx)
++{
++    struct sim *s = ctx;
++    s->streaming = 1;
++    s->ended     = 0;
++    return SLOGIC_OK;
++}
++
++static int sim_stream_read(void *ctx, const uint8_t **data, size_t *size, int *last, int timeout_ms)
++{
++    struct sim *s = ctx;
++    if (!s->streaming || s->ended)
++        return SLOGIC_ERR_END;
++    size_t max = SIM_BUF_SIZE;
++    if (s->realtime && (s->status & SLOGIC_STATUS_RUNNING)) {
++        /* Data paced at the samplerate: bytes available since the start. */
++        double rate  = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1)*sim_channels(s)/8;
++        double t0    = slogic_time();
++        for (;;) {
++            double avail = (slogic_time() - s->t_start)*rate - (double)s->words_sent*4;
++            if (avail >= 8) {
++                max = avail < SIM_BUF_SIZE ? ((size_t)avail)/8*8 : SIM_BUF_SIZE;
++                break;
++            }
++            if (!(s->control & SLOGIC_CONTROL_ENABLE) || (s->limit && s->sample >= s->limit))
++                break;
++            if ((slogic_time() - t0)*1e3 >= (timeout_ms < 0 ? 1e9 : timeout_ms))
++                return SLOGIC_ERR_TIMEOUT;
++            slogic_sleep_ms(1);
++        }
++    }
++    *size = sim_generate(s, s->buf, max, last);
++    *data = s->buf;
++    if (*last)
++        s->ended = 1;
++    return SLOGIC_OK;
++}
++
++static int sim_stream_stop(void *ctx)
++{
++    struct sim *s = ctx;
++    s->streaming = 0;
++    return SLOGIC_OK;
++}
++
++/* Open/Close */
++/*------------*/
++
++static void sim_close(void *ctx)
++{
++    struct sim *s = ctx;
++    if (!s)
++        return;
++    if (s->flash_writes_golden)
++        fprintf(stderr, "slogic sim: %d write(s) to the golden image area!\n", s->flash_writes_golden);
++    free(s->flash.mem);
++    free(s);
++}
++
++static void sim_get_info(void *ctx, struct slogic_info *info)
++{
++    (void)ctx;
++    snprintf(info->transport, sizeof(info->transport), "sim");
++    snprintf(info->serial, sizeof(info->serial), "sim");
++    info->usb_speed = 5000;
++}
++
++static const struct slogic_transport sim_transport = {
++    .name         = "sim",
++    .read_burst   = sim_read_burst,
++    .write_burst  = sim_write_burst,
++    .stream_start = sim_stream_start,
++    .stream_read  = sim_stream_read,
++    .stream_stop  = sim_stream_stop,
++    .close        = sim_close,
++    .get_info     = sim_get_info,
++};
++
++int slogic_sim_open(const char *args, struct slogic_dev *dev)
++{
++    struct sim *s = calloc(1, sizeof(*s));
++    const char *p;
++
++    if (!s)
++        return SLOGIC_ERR_NOMEM;
++    s->flash.mem = malloc(SIM_FLASH_SIZE);
++    if (!s->flash.mem) {
++        free(s);
++        return SLOGIC_ERR_NOMEM;
++    }
++    memset(s->flash.mem, 0xff, SLOGIC_FLASH_APP_SIZE);
++    memset(s->flash.mem + SLOGIC_FLASH_APP_SIZE, 0xa5, SIM_FLASH_SIZE - SLOGIC_FLASH_APP_SIZE);
++    s->divider = 1;
++    s->status  = SLOGIC_STATUS_DONE;
++    s->t0      = slogic_time();
++    s->pins[0] = 2; s->pins[1] = 0; s->pins[2] = 3; s->pins[3] = 1; /* Hidden mapping (probed). */
++    if ((p = strstr(args, "rate=")))
++        s->rate = atof(p + 5);
++    s->realtime = !strstr(args, "fast");
++    if ((p = strstr(args, "pins=")) && strlen(p + 5) >= 4)
++        for (int i = 0; i < 4; i++)
++            s->pins[i] = (unsigned)(p[5 + i] - '0') % SLOGIC_FLASH_NPADS;
++    dev->t   = &sim_transport;
++    dev->ctx = s;
++    return SLOGIC_OK;
++}
++
++/* Test access: golden image area writes. */
++int slogic_sim_golden_writes(struct slogic_dev *dev);
++int slogic_sim_golden_writes(struct slogic_dev *dev)
++{
++    if (!dev || dev->t != &sim_transport)
++        return -1;
++    return ((struct sim *)dev->ctx)->flash_writes_golden;
++}
+diff --git a/src/hardware/litex-slogic/libslogic/slogic_usb.c b/src/hardware/litex-slogic/libslogic/slogic_usb.c
+new file mode 100644
+index 00000000..00cbbdcf
+--- /dev/null
++++ b/src/hardware/litex-slogic/libslogic/slogic_usb.c
+@@ -0,0 +1,347 @@
++/* SPDX-License-Identifier: BSD-2-Clause
++ *
++ * libslogic: USB3 transport (libusb-1.0).
++ *
++ * - EP0: SoC bus accesses with vendor requests (LiteX CommUSB protocol, USB3-PIPE USB3EP0Wishbone):
++ *   bmRequestType 0xc3 (read)/0x43 (write), bRequest 0, wValue/wIndex: address (low/high 16-bit), up to
++ *   128 words per transfer.
++ * - EP1 Bulk IN: capture data, ring of asynchronous transfers (completed in order), a short transfer
++ *   ends the capture (gateware `last`: short packet).
++ *
++ * This file is part of SLogic16U3.
++ *
++ * Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <libusb.h>
++
++#include "slogic.h"
++#include "slogic_internal.h"
++
++/* Constants */
++/*-----------*/
++
++#define SLOGIC_USB_VID          0x1d50
++#define SLOGIC_USB_PID          0x605a
++#define SLOGIC_USB_PRODUCT      "SLogic16U3 LiteX"
++#define SLOGIC_USB_INTERFACE    0
++#define SLOGIC_USB_DATA_EP      0x81
++#define SLOGIC_USB_WB_READ      0xc3
++#define SLOGIC_USB_WB_WRITE     0x43
++#define SLOGIC_USB_WB_REQUEST   0x00
++#define SLOGIC_USB_WB_MAX_WORDS 128
++#define SLOGIC_USB_CTRL_TIMEOUT 1000
++
++#define SLOGIC_USB_XFERS        16
++#define SLOGIC_USB_XFER_SIZE    (256*1024)
++
++/* Context */
++/*---------*/
++
++struct slogic_usb_xfer {
++    struct libusb_transfer *transfer;
++    uint8_t *buf;
++    int      done;
++    int      status;
++    int      length;
++};
++
++struct slogic_usb {
++    libusb_context       *ctx;
++    libusb_device_handle *handle;
++    int                   claimed;
++    int                   speed;
++    char                  serial[64];
++    /* Stream. */
++    struct slogic_usb_xfer xfers[SLOGIC_USB_XFERS];
++    int                    streaming;
++    int                    head;    /* Next transfer to return. */
++    int                    pending; /* Transfer returned by the last read (resubmitted next). */
++    int                    ended;
++};
++
++/* Bus */
++/*-----*/
++
++static int slogic_usb_read_burst(void *ctx, uint32_t addr, uint32_t *vals, size_t count)
++{
++    struct slogic_usb *u = ctx;
++    uint8_t data[4*SLOGIC_USB_WB_MAX_WORDS];
++
++    while (count) {
++        size_t n = count > SLOGIC_USB_WB_MAX_WORDS ? SLOGIC_USB_WB_MAX_WORDS : count;
++        int rc = libusb_control_transfer(u->handle, SLOGIC_USB_WB_READ, SLOGIC_USB_WB_REQUEST,
++            addr & 0xffff, addr >> 16, data, (uint16_t)(4*n), SLOGIC_USB_CTRL_TIMEOUT);
++        if (rc != (int)(4*n))
++            return SLOGIC_ERR_IO;
++        for (size_t i = 0; i < n; i++)
++            vals[i] = (uint32_t)data[4*i] | (uint32_t)data[4*i + 1] << 8 |
++                      (uint32_t)data[4*i + 2] << 16 | (uint32_t)data[4*i + 3] << 24;
++        vals  += n;
++        addr  += 4*n;
++        count -= n;
++    }
++    return SLOGIC_OK;
++}
++
++static int slogic_usb_write_burst(void *ctx, uint32_t addr, const uint32_t *vals, size_t count)
++{
++    struct slogic_usb *u = ctx;
++    uint8_t data[4*SLOGIC_USB_WB_MAX_WORDS];
++
++    while (count) {
++        size_t n = count > SLOGIC_USB_WB_MAX_WORDS ? SLOGIC_USB_WB_MAX_WORDS : count;
++        for (size_t i = 0; i < n; i++) {
++            data[4*i + 0] = vals[i] >>  0;
++            data[4*i + 1] = vals[i] >>  8;
++            data[4*i + 2] = vals[i] >> 16;
++            data[4*i + 3] = vals[i] >> 24;
++        }
++        int rc = libusb_control_transfer(u->handle, SLOGIC_USB_WB_WRITE, SLOGIC_USB_WB_REQUEST,
++            addr & 0xffff, addr >> 16, data, (uint16_t)(4*n), SLOGIC_USB_CTRL_TIMEOUT);
++        if (rc != (int)(4*n))
++            return SLOGIC_ERR_IO;
++        vals  += n;
++        addr  += 4*n;
++        count -= n;
++    }
++    return SLOGIC_OK;
++}
++
++/* Stream */
++/*--------*/
++
++static void LIBUSB_CALL slogic_usb_callback(struct libusb_transfer *transfer)
++{
++    struct slogic_usb_xfer *x = transfer->user_data;
++    x->status = transfer->status;
++    x->length = transfer->actual_length;
++    x->done   = 1;
++}
++
++static int slogic_usb_submit(struct slogic_usb *u, int i)
++{
++    struct slogic_usb_xfer *x = &u->xfers[i];
++    x->done = 0;
++    libusb_fill_bulk_transfer(x->transfer, u->handle, SLOGIC_USB_DATA_EP, x->buf,
++        SLOGIC_USB_XFER_SIZE, slogic_usb_callback, x, 0);
++    return libusb_submit_transfer(x->transfer) ? SLOGIC_ERR_IO : SLOGIC_OK;
++}
++
++static int slogic_usb_stream_stop(void *ctx)
++{
++    struct slogic_usb *u = ctx;
++
++    if (!u->streaming)
++        return SLOGIC_OK;
++    for (int i = 0; i < SLOGIC_USB_XFERS; i++)
++        if (!u->xfers[i].done)
++            libusb_cancel_transfer(u->xfers[i].transfer);
++    /* Wait for the cancellations (bounded). */
++    double t0 = slogic_time();
++    for (;;) {
++        int busy = 0;
++        for (int i = 0; i < SLOGIC_USB_XFERS; i++)
++            busy |= !u->xfers[i].done;
++        if (!busy || slogic_time() - t0 > 1.0)
++            break;
++        struct timeval tv = { 0, 10000 };
++        libusb_handle_events_timeout_completed(u->ctx, &tv, NULL);
++    }
++    u->streaming = 0;
++    return SLOGIC_OK;
++}
++
++static int slogic_usb_stream_start(void *ctx)
++{
++    struct slogic_usb *u = ctx;
++
++    slogic_usb_stream_stop(u);
++    /* Endpoint halt cleared: Sequence Numbers reset (the gateware flushes its stale data on start). */
++    libusb_clear_halt(u->handle, SLOGIC_USB_DATA_EP);
++    for (int i = 0; i < SLOGIC_USB_XFERS; i++) {
++        if (!u->xfers[i].transfer) {
++            u->xfers[i].transfer = libusb_alloc_transfer(0);
++            u->xfers[i].buf      = malloc(SLOGIC_USB_XFER_SIZE);
++            if (!u->xfers[i].transfer || !u->xfers[i].buf)
++                return SLOGIC_ERR_NOMEM;
++        }
++        u->xfers[i].done = 1;
++    }
++    for (int i = 0; i < SLOGIC_USB_XFERS; i++)
++        if (slogic_usb_submit(u, i))
++            return SLOGIC_ERR_IO;
++    u->head      = 0;
++    u->pending   = -1;
++    u->ended     = 0;
++    u->streaming = 1;
++    return SLOGIC_OK;
++}
++
++static int slogic_usb_stream_read(void *ctx, const uint8_t **data, size_t *size, int *last, int timeout_ms)
++{
++    struct slogic_usb *u = ctx;
++    struct slogic_usb_xfer *x;
++    double t0 = slogic_time();
++
++    if (!u->streaming || u->ended)
++        return SLOGIC_ERR_END;
++    /* Previous buffer released: resubmitted. */
++    if (u->pending >= 0) {
++        if (slogic_usb_submit(u, u->pending))
++            return SLOGIC_ERR_IO;
++        u->pending = -1;
++    }
++    x = &u->xfers[u->head];
++    while (!x->done) {
++        int remaining = timeout_ms - (int)((slogic_time() - t0)*1e3);
++        if (timeout_ms >= 0 && remaining <= 0)
++            return SLOGIC_ERR_TIMEOUT;
++        struct timeval tv = { 0, 100000 };
++        if (timeout_ms >= 0 && remaining < 100)
++            tv.tv_usec = remaining*1000;
++        if (libusb_handle_events_timeout_completed(u->ctx, &tv, &x->done) &&
++            !x->done)
++            return SLOGIC_ERR_IO;
++    }
++    if (x->status != LIBUSB_TRANSFER_COMPLETED)
++        return SLOGIC_ERR_IO;
++    *data = x->buf;
++    *size = x->length;
++    *last = x->length < SLOGIC_USB_XFER_SIZE;
++    if (*last)
++        u->ended = 1;
++    else
++        u->pending = u->head;
++    u->head = (u->head + 1) % SLOGIC_USB_XFERS;
++    return SLOGIC_OK;
++}
++
++/* Open/Close */
++/*------------*/
++
++static void slogic_usb_close(void *ctx)
++{
++    struct slogic_usb *u = ctx;
++
++    if (!u)
++        return;
++    slogic_usb_stream_stop(u);
++    for (int i = 0; i < SLOGIC_USB_XFERS; i++) {
++        if (u->xfers[i].transfer)
++            libusb_free_transfer(u->xfers[i].transfer);
++        free(u->xfers[i].buf);
++    }
++    if (u->claimed)
++        libusb_release_interface(u->handle, SLOGIC_USB_INTERFACE);
++    if (u->handle)
++        libusb_close(u->handle);
++    if (u->ctx)
++        libusb_exit(u->ctx);
++    free(u);
++}
++
++static void slogic_usb_get_info(void *ctx, struct slogic_info *info)
++{
++    struct slogic_usb *u = ctx;
++    snprintf(info->transport, sizeof(info->transport), "usb");
++    snprintf(info->serial, sizeof(info->serial), "%s", u->serial);
++    info->usb_speed = u->speed;
++}
++
++static const struct slogic_transport slogic_usb_transport = {
++    .name         = "usb",
++    .read_burst   = slogic_usb_read_burst,
++    .write_burst  = slogic_usb_write_burst,
++    .stream_start = slogic_usb_stream_start,
++    .stream_read  = slogic_usb_stream_read,
++    .stream_stop  = slogic_usb_stream_stop,
++    .close        = slogic_usb_close,
++    .get_info     = slogic_usb_get_info,
++};
++
++static void slogic_usb_arg(const char *args, const char *key, char *val, size_t size)
++{
++    const char *p = strstr(args, key);
++    size_t n = 0;
++    val[0] = '\0';
++    if (!p || p[strlen(key)] != '=')
++        return;
++    p += strlen(key) + 1;
++    while (p[n] && p[n] != ',' && n < size - 1)
++        n++;
++    memcpy(val, p, n);
++    val[n] = '\0';
++}
++
++int slogic_usb_open(const char *args, struct slogic_dev *dev)
++{
++    struct slogic_usb *u;
++    libusb_device **list = NULL;
++    char want_serial[64], want_path[32];
++    ssize_t n;
++
++    slogic_usb_arg(args, "serial", want_serial, sizeof(want_serial));
++    slogic_usb_arg(args, "path",   want_path,   sizeof(want_path));
++
++    u = calloc(1, sizeof(*u));
++    if (!u)
++        return SLOGIC_ERR_NOMEM;
++    if (libusb_init(&u->ctx)) {
++        free(u);
++        return SLOGIC_ERR_IO;
++    }
++    n = libusb_get_device_list(u->ctx, &list);
++    for (ssize_t i = 0; i < n && !u->handle; i++) {
++        struct libusb_device_descriptor desc;
++        libusb_device_handle *h;
++        char product[64] = "", serial[64] = "", path[32];
++        uint8_t ports[8];
++        int np, len;
++
++        if (libusb_get_device_descriptor(list[i], &desc) || desc.idVendor != SLOGIC_USB_VID ||
++            desc.idProduct != SLOGIC_USB_PID)
++            continue;
++        np  = libusb_get_port_numbers(list[i], ports, sizeof(ports));
++        len = snprintf(path, sizeof(path), "%u", libusb_get_bus_number(list[i]));
++        for (int k = 0; k < np && len < (int)sizeof(path); k++)
++            len += snprintf(path + len, sizeof(path) - len, "%c%u", k ? '.' : '-', ports[k]);
++        if (want_path[0] && strcmp(want_path, path))
++            continue;
++        if (libusb_open(list[i], &h))
++            continue;
++        if (desc.iProduct)
++            libusb_get_string_descriptor_ascii(h, desc.iProduct, (unsigned char *)product, sizeof(product));
++        if (desc.iSerialNumber)
++            libusb_get_string_descriptor_ascii(h, desc.iSerialNumber, (unsigned char *)serial, sizeof(serial));
++        /* Other USB3-PIPE devices may share the VID/PID: product string checked. */
++        if (strcmp(product, SLOGIC_USB_PRODUCT) || (want_serial[0] && strcmp(want_serial, serial))) {
++            libusb_close(h);
++            continue;
++        }
++        u->handle = h;
++        u->speed  = libusb_get_device_speed(list[i]) == LIBUSB_SPEED_SUPER ? 5000 :
++                    libusb_get_device_speed(list[i]) == LIBUSB_SPEED_SUPER_PLUS ? 10000 : 0;
++        snprintf(u->serial, sizeof(u->serial), "%s", serial);
++    }
++    if (list)
++        libusb_free_device_list(list, 1);
++    if (!u->handle) {
++        slogic_usb_close(u);
++        return SLOGIC_ERR_NODEV;
++    }
++    libusb_set_auto_detach_kernel_driver(u->handle, 1);
++    if (libusb_claim_interface(u->handle, SLOGIC_USB_INTERFACE)) {
++        slogic_usb_close(u);
++        return SLOGIC_ERR_IO;
++    }
++    u->claimed = 1;
++    dev->t   = &slogic_usb_transport;
++    dev->ctx = u;
++    return SLOGIC_OK;
++}
+diff --git a/src/hardware/litex-slogic/protocol.c b/src/hardware/litex-slogic/protocol.c
+new file mode 100644
+index 00000000..feeb2b09
+--- /dev/null
++++ b/src/hardware/litex-slogic/protocol.c
+@@ -0,0 +1,131 @@
++/*
++ * This file is part of the libsigrok project.
++ *
++ * Copyright (C) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <config.h>
++#include <string.h>
++#include "protocol.h"
++
++/*
++ * Capture mode: the smallest gateware channel mode (4/8/16) holding the highest enabled channel
++ * (the gateware captures CH0..CHn-1).
++ */
++SR_PRIV unsigned litex_slogic_channels_mode(const struct sr_dev_inst *sdi)
++{
++	int highest = -1;
++
++	for (GSList *l = sdi->channels; l; l = l->next) {
++		struct sr_channel *ch = l->data;
++		if (ch->enabled && ch->index > highest)
++			highest = ch->index;
++	}
++	if (highest < 4)
++		return 4;
++	if (highest < 8)
++		return 8;
++	return 16;
++}
++
++static void send_logic(const struct sr_dev_inst *sdi, const uint8_t *data, uint64_t samples)
++{
++	struct dev_context *devc = sdi->priv;
++	struct sr_datafeed_logic logic = {
++		.length   = samples*devc->unitsize,
++		.unitsize = devc->unitsize,
++		.data     = (void *)data,
++	};
++	struct sr_datafeed_packet packet = {
++		.type    = SR_DF_LOGIC,
++		.payload = &logic,
++	};
++
++	if (!samples)
++		return;
++	sr_session_send(sdi, &packet);
++}
++
++/* Samples to the session: soft trigger (pre-trigger samples sent by the trigger code), sample limit. */
++static void process_samples(const struct sr_dev_inst *sdi, uint8_t *data, uint64_t samples)
++{
++	struct dev_context *devc = sdi->priv;
++	uint64_t offset = 0;
++
++	if (!devc->trigger_fired) {
++		int pre_trigger_samples = 0;
++		int trigger_offset = soft_trigger_logic_check(devc->stl, data, samples*devc->unitsize,
++			&pre_trigger_samples);
++		if (trigger_offset < 0)
++			return;
++		devc->sent_samples += pre_trigger_samples;
++		devc->trigger_fired = TRUE;
++		offset = trigger_offset;
++	}
++	uint64_t n = samples - offset;
++	if (devc->limit_samples && devc->sent_samples + n > devc->limit_samples)
++		n = devc->limit_samples - devc->sent_samples;
++	send_logic(sdi, data + offset*devc->unitsize, n);
++	devc->sent_samples += n;
++	if (devc->limit_samples && devc->sent_samples >= devc->limit_samples)
++		devc->acq_done = TRUE;
++}
++
++SR_PRIV int litex_slogic_receive_data(int fd, int revents, void *cb_data)
++{
++	const struct sr_dev_inst *sdi = cb_data;
++	struct dev_context *devc;
++	const uint8_t *data;
++	size_t size;
++	int r = SLOGIC_OK;
++
++	(void)fd;
++	(void)revents;
++
++	if (!sdi || !(devc = sdi->priv))
++		return TRUE;
++
++	/* Drain the received buffers (bounded: the session loop keeps running). */
++	for (int i = 0; i < 64 && !devc->acq_done; i++) {
++		r = slogic_capture_read(devc->dev, &data, &size, i ? 0 : LITEX_SLOGIC_READ_MS);
++		if (r != SLOGIC_OK)
++			break;
++		uint64_t samples = (uint64_t)size*8/devc->channels;
++		if (samples*devc->unitsize > devc->unpacked_size) {
++			devc->unpacked_size = samples*devc->unitsize;
++			devc->unpacked = g_realloc(devc->unpacked, devc->unpacked_size);
++		}
++		slogic_unpack(devc->channels, data, devc->received_samples, samples, devc->unpacked);
++		devc->received_samples += samples;
++		process_samples(sdi, devc->unpacked, samples);
++	}
++
++	if (r == SLOGIC_ERR_OVERFLOW) {
++		sr_err("Capture overflow: data lost (USB bandwidth), lower the samplerate or channels.");
++		devc->acq_done = TRUE;
++	} else if (r == SLOGIC_ERR_END) {
++		devc->acq_done = TRUE;
++	} else if (r != SLOGIC_OK && r != SLOGIC_ERR_TIMEOUT) {
++		sr_err("Capture error: %s.", slogic_strerror(r));
++		devc->acq_done = TRUE;
++	}
++	if (devc->limit_msec && (uint64_t)(g_get_monotonic_time() - devc->start_us) >= devc->limit_msec*1000)
++		devc->acq_done = TRUE;
++
++	if (devc->acq_done)
++		sr_dev_acquisition_stop((struct sr_dev_inst *)sdi);
++	return TRUE;
++}
+diff --git a/src/hardware/litex-slogic/protocol.h b/src/hardware/litex-slogic/protocol.h
+new file mode 100644
+index 00000000..c0a5ae7c
+--- /dev/null
++++ b/src/hardware/litex-slogic/protocol.h
+@@ -0,0 +1,67 @@
++/*
++ * This file is part of the libsigrok project.
++ *
++ * Copyright (C) 2026 Enjoy-Digital <enjoy-digital.fr>
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBSIGROK_HARDWARE_LITEX_SLOGIC_PROTOCOL_H
++#define LIBSIGROK_HARDWARE_LITEX_SLOGIC_PROTOCOL_H
++
++#include <glib.h>
++#include <stdint.h>
++#include <libsigrok/libsigrok.h>
++#include "libsigrok-internal.h"
++
++/* libslogic (BSD-2-Clause): SLogic16U3 LiteX gateware host library. */
++#include "libslogic/slogic.h"
++
++#define LOG_PREFIX "litex-slogic"
++
++#define LITEX_SLOGIC_MAX_RATES  64
++#define LITEX_SLOGIC_READ_MS    10
++
++struct dev_context {
++	char *conn;                    /* libslogic URI ("usb", "usb:serial=...", "sim"). */
++	struct slogic_dev *dev;
++	struct slogic_info info;
++
++	uint64_t samplerates[LITEX_SLOGIC_MAX_RATES];
++	int num_samplerates;
++
++	uint64_t cur_samplerate;
++	uint64_t limit_samples;
++	uint64_t limit_msec;
++	uint64_t capture_ratio;
++	int pattern;                   /* 0: inputs, 1: counter test pattern. */
++
++	/* Acquisition. */
++	unsigned channels;             /* Capture mode: 4, 8 or 16 channels. */
++	unsigned unitsize;
++	uint64_t received_samples;     /* Samples received from the device. */
++	uint64_t sent_samples;         /* Samples sent to the session (after the trigger). */
++	int64_t start_us;
++	uint8_t *unpacked;
++	size_t unpacked_size;
++	struct soft_trigger_logic *stl;
++	gboolean trigger_fired;
++	gboolean acq_done;
++	gboolean acq_running;           /* Session source added. */
++};
++
++SR_PRIV int litex_slogic_receive_data(int fd, int revents, void *cb_data);
++SR_PRIV unsigned litex_slogic_channels_mode(const struct sr_dev_inst *sdi);
++
++#endif

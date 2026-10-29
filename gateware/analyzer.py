@@ -17,7 +17,7 @@
 """
 
 from migen import *
-from migen.genlib.cdc import MultiReg, BusSynchronizer, GrayCounter, GrayDecoder
+from migen.genlib.cdc import MultiReg, BusSynchronizer, GrayCounter
 
 from litex.gen import *
 
@@ -123,9 +123,11 @@ class Analyzer(LiteXModule):
             self.comb += gray.ce.eq(1)
             gray_sys = Signal(32)
             self.specials += MultiReg(gray.q, gray_sys)
-            self.decoder = decoder = GrayDecoder(32)
-            self.comb += decoder.i.eq(gray_sys)
-            self.sync += self.clk_count.eq(decoder.o)
+            # Gray to binary with per bit signals (no combinatorial self-reference).
+            binary = [Signal() for _ in range(32)]
+            self.comb += binary[31].eq(gray_sys[31])
+            self.comb += [binary[i].eq(binary[i + 1] ^ gray_sys[i]) for i in range(31)]
+            self.sync += self.clk_count.eq(Cat(*binary))
 
     def add_csr(self):
         # Info.
