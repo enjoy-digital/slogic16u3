@@ -20,7 +20,7 @@ BUILD   := build
 LIB_SRC := libslogic/slogic.c libslogic/slogic_usb.c libslogic/slogic_sim.c libslogic/slogic_flash.c \
            libslogic/slogic_dfu.c
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o)
-TOOLS   := slogic_util slogic_record
+TOOLS   := slogic_util slogic_record slogic_scopehal_bridge
 TESTS   := test_libslogic
 
 .PHONY: all lib tools check install clean
@@ -39,6 +39,10 @@ $(BUILD)/libslogic.so: $(LIB_OBJ)
 	$(CC) -shared -Wl,-soname,libslogic.so.0 -o $@ $^ $(LDLIBS)
 
 tools: $(TOOLS:%=$(BUILD)/%)
+
+$(BUILD)/slogic_scopehal_bridge.o: ../scopehal/slogic_scopehal_bridge.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/slogic_%: $(BUILD)/slogic_%.o $(BUILD)/libslogic.a
 	$(CC) -o $@ $^ $(LDLIBS)
