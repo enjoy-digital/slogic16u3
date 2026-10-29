@@ -4,8 +4,9 @@
  * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
  *
  * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
- * - Capture stream: counter test pattern (sample i = i*divider, as the gateware) or synthetic inputs (CHn:
- *   square wave toggling every 2^(n+2) base samples), packed as the gateware (32-bit packer, last word
+ * - Capture stream: counter test pattern (sample i = i*divider, as the gateware) or synthetic inputs (CH0:
+ *   UART 1Mbaud "Hello from SLogic16U3!", CHn: square wave toggling every 2^(n+2) base samples), packed as
+ *   the gateware (32-bit packer, last word
  *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
  *   (overflow when the capture needs more, after the FIFO).
  * - Flash: 16MB SPI Flash (W25Q128-like: JEDEC ID ef 40 18) on hidden pads (pins), golden image area
@@ -172,12 +173,35 @@ static unsigned sim_channels(const struct sim *s)
     }
 }
 
+/* Simulated UART on CH0: SIM_UART_TEXT repeated, 1Mbaud 8N1 (800 base samples per bit), idle gaps. */
+#define SIM_UART_TEXT  "Hello from SLogic16U3!\r\n"
+#define SIM_UART_BIT   800
+#define SIM_UART_FRAME 12 /* Start + 8 data + stop + 2 idle bits. */
+
+static int sim_uart(uint64_t t)
+{
+    const size_t len = sizeof(SIM_UART_TEXT) - 1;
+    uint64_t bit   = t/SIM_UART_BIT;
+    uint64_t frame = (bit/SIM_UART_FRAME) % (len + 4);
+    unsigned pos   = bit % SIM_UART_FRAME;
+
+    if (frame < 4)
+        return 1; /* Idle before each message. */
+    uint8_t c = (uint8_t)SIM_UART_TEXT[frame - 4];
+    if (pos == 0)
+        return 0; /* Start bit. */
+    if (pos <= 8)
+        return (c >> (pos - 1)) & 1;
+    return 1;     /* Stop/idle. */
+}
+
 static uint16_t sim_sample(const struct sim *s, uint64_t i)
 {
     uint64_t t = i*(s->divider ? s->divider : 1); /* Base sample index. */
     if (((s->control >> 8) & 3) == SLOGIC_PATTERN_COUNTER)
         return (uint16_t)t;
-    return (uint16_t)(t >> 2);                   /* CHn toggles every 2^(n+2) base samples. */
+    /* CH0: UART, CHn (n >= 1): square wave toggling every 2^(n+2) base samples. */
+    return (uint16_t)(((t >> 2) & ~1u) | sim_uart(t));
 }
 
 static void sim_start(struct sim *s)

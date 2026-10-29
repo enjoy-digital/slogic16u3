@@ -1,4 +1,138 @@
 # SLogic16U3
 
-Open LiteX gateware and host stack for the **Sipeed SLogic16U3** USB3 logic analyzer: work in progress,
-see [doc/PLAN.md](doc/PLAN.md) and [doc/HARDWARE.md](doc/HARDWARE.md).
+https://github.com/enjoy-digital/slogic_16u3/raw/main/doc/images/slogic_16u3.mp4
+
+<sub>▶ Promo video (rendered with three.js and a synthesized soundtrack from [`doc/illustration`](doc/illustration)).
+Also as [still](doc/images/slogic_16u3-hires.jpg).</sub>
+
+**SLogic16U3**: open gateware and host stack for the **Sipeed SLogic16U3** USB3 logic analyzer, an alternative
+bitstream built with [LiteX](https://github.com/enjoy-digital/litex) where everything is open from the USB3 PHY
+to PulseView:
+
+- **USB3 in the FPGA**: no USB chip on this analyzer, the Gowin GW5AT-15 transceiver is the USB3 PHY.
+  [USB3-PIPE](https://github.com/enjoy-digital/usb3_pipe) implements the PIPE, LTSSM, Link/Protocol layers and
+  endpoints in the fabric (5Gbps).
+- **Simple gateware around the USB3 core**: IDES8 deserializers (800MS/s base), capture core (decimation, 4/8/16
+  channel modes, sample-exact limits, overflow detection, test pattern), raw Bulk IN streaming, CSRs over EP0.
+- **Low level C access**: `libslogic` (USB3 transport + a simulated device), `slogic_util`/`slogic_record` tools.
+- **sigrok/PulseView**: native libsigrok driver (`litex-slogic`), **ngscopeclient**: TwinLan bridge + scopehal
+  driver.
+- **Remote update, never bricked**: Flash update from the gateware (pads probed at runtime) or through the Sipeed
+  DFU loader, which is never written: the MODE button always gets back to it.
+- **Tested before the hardware**: Migen unit tests, USB3 host model ↔ Device Core ↔ SoC system simulation, C unit
+  tests and sigrok/ngscopeclient end-to-end tests on the simulated device.
+
+> **Status: work in progress.** The gateware builds for the GW5AT-15 (Gowin IDE) and is validated in simulation,
+> the host stack is validated on the simulated device. **Hardware bring-up is the next step** (USB3 link, inputs,
+> rates, Flash pads): see [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU
+> loader.
+
+| | |
+|:---:|:---:|
+| [![The SLogic16U3](doc/images/slogic_16u3-inside.jpg)](doc/images/slogic_16u3-inside.jpg) | [![Architecture](doc/images/slogic_16u3-architecture.jpg)](doc/images/slogic_16u3-architecture.jpg) |
+| Gowin GW5AT-15 (USB3 in the GTR12 transceiver), 16 inputs, 16MB SPI Flash, 125MHz oscillator. | CH0-CH15 → IDES8 → Capture → FIFO → USB3 Device Core → GTR12 → USB-C. |
+
+## Architecture
+
+```
+             +------------------------------------- GW5AT-15 (LiteX SoC, no CPU) ----------------------------------+
+  CH0-CH15 ──┼─► IDES8 x16 ─► Capture ───────► CDC ─► FIFO ─► USB3 Device Core ─► USB3-PIPE PHY ─► GTR12 Q0 ─┼──► USB-C
+             │   800MS/s      pattern/decim/       512x64     Bulk IN (EP1)       LTSSM/PIPE        5Gbps       │   (VL162)
+             │   (100MHz x8)  4-8-16ch/packer                 EP0 CommUSB ──┐                                    │
+             │                                                              ▼                                   │
+  SPI Flash ◄┼── Flash core (pads mapped at runtime) ◄── Wishbone/CSRs ◄────┘                                    │
+             +-------------------------------------------------------------------------------------------------+
+```
+
+| Channels | Max samplerate | Bandwidth | | Samplerates |
+|---|---|---|---|---|
+| 4  | 800MS/s | 3.2Gb/s | | 800MHz/N: 800, 400, 266, 200, 160, 100 ... MHz |
+| 8  | 400MS/s | 3.2Gb/s | | down to the kHz range |
+| 16 | 200MS/s | 3.2Gb/s | | |
+
+Details: [doc/GATEWARE.md](doc/GATEWARE.md) (clocks, cores, registers, resources), [doc/HARDWARE.md](doc/HARDWARE.md)
+(pinout, flash layout, DFU loader, stock protocol).
+
+## Software
+
+| | |
+|:---:|:---:|
+| [![Software stack](doc/images/slogic_16u3-software.jpg)](doc/images/slogic_16u3-software.jpg) | [![Capture](doc/images/slogic_16u3-capture.jpg)](doc/images/slogic_16u3-capture.jpg) |
+| libslogic (C) → tools, sigrok/PulseView, ngscopeclient. | Raw samples streamed over USB3. |
+
+```sh
+make -C software/user && make -C software/user check     # libslogic, tools, unit tests.
+software/user/build/slogic_util info
+software/user/build/slogic_util check                    # Self-test (counter pattern, all modes/rates).
+software/user/build/slogic_record -r 100M -c 16 -n 1M -o capture.vcd
+
+software/sigrok/build.sh --pulseview                     # libsigrok + litex-slogic, sigrok-cli, PulseView.
+software/sigrok/install/bin/sigrok-cli -d litex-slogic -c samplerate=100M --samples 1M -P uart:rx=CH0 -A uart
+
+software/user/build/slogic_scopehal_bridge               # ngscopeclient: driver "slogic", twinlan localhost:5025:5026.
+```
+
+Add `-d sim` (tools) or `conn=sim` (sigrok) to run on the simulated device. Details:
+[doc/SOFTWARE.md](doc/SOFTWARE.md).
+
+## Getting Started
+
+> **Warning**: this replaces the application firmware of your SLogic16U3 (the Sipeed DFU loader is kept: the
+> stock firmware can be restored). Back up the whole Flash first and keep the dump private.
+
+### Requirements
+
+- Gowin IDE (`gw_sh` in the `PATH`, GW5AT-15 support): 1.9.10 builds the design, 1.9.12 recommended (GW5AT-15
+  device version B).
+- LiteX, Migen, LiteX-Boards, LiteICLink, USB3-PIPE (`litex_setup.py --init --install`), the not yet merged
+  branches: `source scripts/env.sh` (LiteX-Boards `sipeed_slogic16u3`, LiteICLink `serdes/gtr12-gw5at`,
+  USB3-PIPE `gw5/gw5at-15`).
+- Host: libusb-1.0 (C tools), autotools/glib/libzip (libsigrok), Qt5/Boost (PulseView), Python 3 + pytest (tests).
+- USB access: `sudo cp software/udev/99-slogic16u3.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules`.
+
+### Build, Test, Install
+
+```sh
+source scripts/env.sh
+python3 -m pytest test                        # Gateware/system/host tests (Migen, simulated device).
+./slogic_16u3.py --build                      # Bitstream: build/gateware/sipeed_slogic16u3.{fs,bin}.
+./slogic_16u3.py --load                       # SRAM load over JTAG (JST SH connector, FT2232: openFPGALoader).
+
+# First install (MODE button: DFU loader, LED blinking red):
+software/user/build/slogic_util dfu dump slogic16u3-backup.bin
+software/user/build/slogic_util dfu update build/gateware/sipeed_slogic16u3.bin
+# Then remote updates from our gateware:
+software/user/build/slogic_util flash update build/gateware/sipeed_slogic16u3.bin
+```
+
+Update/recovery details: [doc/UPDATE.md](doc/UPDATE.md).
+
+## Open Source
+
+[![Open source stack](doc/images/slogic_16u3-opensource.jpg)](doc/images/slogic_16u3-opensource.jpg)
+
+Gateware: [LiteX](https://github.com/enjoy-digital/litex), [Migen](https://github.com/m-labs/migen),
+[LiteX-Boards](https://github.com/litex-hub/litex-boards), [LiteICLink](https://github.com/enjoy-digital/liteiclink)
+(GTR12), [USB3-PIPE](https://github.com/enjoy-digital/usb3_pipe) (built with the Gowin IDE). Host:
+[libusb](https://libusb.info), [sigrok](https://sigrok.org), [ngscopeclient](https://www.ngscopeclient.org).
+This project adds GW5AT-15 support to LiteICLink/USB3-PIPE and completes the SLogic16U3 support in LiteX-Boards.
+
+## Docs
+
+- [doc/PLAN.md](doc/PLAN.md): phases, status, open questions, ideas.
+- [doc/HARDWARE.md](doc/HARDWARE.md): what is known (and missing) about the hardware.
+- [doc/GATEWARE.md](doc/GATEWARE.md): clocks, cores, capture datapath, registers, resources/timings.
+- [doc/SOFTWARE.md](doc/SOFTWARE.md): libslogic, tools, sigrok/PulseView, ngscopeclient, tests.
+- [doc/UPDATE.md](doc/UPDATE.md): flash layout, first install, remote update, recovery.
+
+## Credits
+
+- [slogic16u3-trace](https://github.com/radiolok/slogic16u3-trace): SLogic16U3 USB3/inputs pinout, DFU loader
+  protocol and flash layout.
+- [Sipeed](https://sipeed.com): the hardware, the DFU loader and the libsigrok SLogic driver (stock protocol).
+- [Kenta Ida](https://github.com/ciniml/fpga_samples): first open USB3 stack on the SLogic16U3.
+
+## License
+
+BSD-2-Clause (gateware, libslogic, tools, bridge). The libsigrok driver is GPL-3.0-or-later (libsigrok), the
+scopehal driver BSD-3-Clause (libscopehal).

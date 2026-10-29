@@ -1,0 +1,8 @@
+node_modules/
+_part*
+_snap*
+*.wav
+music.mp3
+*.png
+*.mp4
+!logos/*.png

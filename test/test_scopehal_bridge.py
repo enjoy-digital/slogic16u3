@@ -95,9 +95,9 @@ class TestScopehalBridge(unittest.TestCase):
         seq, fs, trig, channels = self.waveform()
         self.assertEqual(fs, 10_000_000)
         self.assertEqual(sorted(channels), list(range(8)))
-        for ch in range(8):
+        for ch in range(1, 8):
             bits = channels[ch][:1000]
-            # Inputs (simulated): CHn = bit n of (8*i) >> 2.
+            # Inputs (simulated): CHn = bit n of (8*i) >> 2 (CH0: UART).
             self.assertEqual(bits, [((8*i >> 2) >> ch) & 1 for i in range(1000)])
         seq2, *_ = self.waveform()
         self.assertEqual(seq2, seq + 1)

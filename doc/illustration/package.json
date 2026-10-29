@@ -1,0 +1,6 @@
+{
+  "name": "slogic_16u3-illustration",
+  "private": true,
+  "description": "Headless rendering of the SLogic16U3 promo video/stills",
+  "dependencies": { "puppeteer-core": "^23.0.0" }
+}

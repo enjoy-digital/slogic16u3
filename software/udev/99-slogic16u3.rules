@@ -1,0 +1,3 @@
+# SLogic16U3: LiteX gateware (USB3-PIPE, product "SLogic16U3 LiteX") and Sipeed DFU loader (MODE button).
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="605a", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="359f", ATTRS{idProduct}=="30f1", MODE="0666", TAG+="uaccess"

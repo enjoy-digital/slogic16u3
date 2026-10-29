@@ -5,7 +5,7 @@
 # Copyright (c) 2026 Enjoy-Digital <enjoy-digital.fr>
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# libsigrok with the litex-slogic driver, sigrok-cli (and PulseView with --pulseview), built from source
+# libsigrok with the litex-slogic driver, libsigrokdecode, sigrok-cli (and PulseView with --pulseview), built from source
 # into a local prefix (the distribution packages are not touched):
 #
 #   ./build.sh [--pulseview] [--prefix DIR]     (default prefix: ./install)
@@ -26,6 +26,8 @@ LIBSIGROK_REPO=https://github.com/sigrokproject/libsigrok
 LIBSIGROK_REV=0bc24877
 SIGROK_CLI_REPO=https://github.com/sigrokproject/sigrok-cli
 SIGROK_CLI_REV=f44dd91
+LIBSIGROKDECODE_REPO=https://github.com/sigrokproject/libsigrokdecode
+LIBSIGROKDECODE_REV=master
 PULSEVIEW_REPO=https://github.com/sigrokproject/pulseview
 PULSEVIEW_REV=master
 
@@ -85,11 +87,18 @@ git diff HEAD > "$HERE/litex-slogic.patch"
     --enable-demo --enable-fx2lafw --disable-java --disable-python --disable-ruby
 make -s -j"$JOBS" && make -s install
 
+# libsigrokdecode (protocol decoders) --------------------------------------------------------------
+fetch libsigrokdecode $LIBSIGROKDECODE_REPO $LIBSIGROKDECODE_REV
+cd "$SRC/libsigrokdecode"
+[ -f configure ] || ./autogen.sh
+[ -f Makefile ] || ./configure -q --prefix="$PREFIX"
+make -s -j"$JOBS" && make -s install
+
 # sigrok-cli ---------------------------------------------------------------------------------------
 fetch sigrok-cli $SIGROK_CLI_REPO $SIGROK_CLI_REV
 cd "$SRC/sigrok-cli"
 [ -f configure ] || ./autogen.sh
-[ -f Makefile ] || ./configure -q --prefix="$PREFIX"
+./configure -q --prefix="$PREFIX" # Always: libsigrokdecode detected.
 make -s -j"$JOBS" && make -s install
 
 # PulseView (optional) -----------------------------------------------------------------------------

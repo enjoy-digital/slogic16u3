@@ -1,0 +1,660 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SLogic16U3</title>
+<style>
+  :root { --bg: #08090b; --ink: #e9edf3; --dim: #8b93a1; --faint: #505866; --acc: #5cff8a; --acc2: #ffb347; }
+  html, body { margin: 0; padding: 0; background: var(--bg); overflow: hidden; }
+  canvas { display: block; }
+  #overlay { position: absolute; inset: 0; pointer-events: none; font-family: Ubuntu, sans-serif; color: var(--ink); }
+  .o { position: absolute; will-change: opacity, transform; visibility: hidden; }
+  .mono { font-family: 'Ubuntu Mono', monospace; }
+  svg#hud { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  svg#hud .ln { fill: none; stroke: var(--acc); stroke-width: 0.09vw; }
+  svg#hud circle { fill: var(--bg); stroke: var(--acc); stroke-width: 0.1vw; }
+  .tag { position: absolute; font-family: 'Ubuntu Mono', monospace; white-space: nowrap; line-height: 1.3; }
+  .tag .t { font-size: 1.05vw; letter-spacing: 0.08em; color: var(--ink); }
+  .tag .s { font-size: 0.92vw; letter-spacing: 0.03em; color: var(--dim); }
+  #caption { left: 3.4vw; bottom: 6vh; font-family: 'Ubuntu Mono', monospace; font-size: 1.05vw; letter-spacing: 0.2em; text-transform: uppercase; }
+  #caption .n { color: var(--acc); margin-right: 1.2vw; }
+  #caption .d { color: var(--dim); margin-left: 1.2vw; }
+  #caprule { left: 3.4vw; bottom: 4.9vh; height: 1px; width: 26vw; transform-origin: 0 0; background: linear-gradient(90deg, var(--acc), rgba(92,255,138,0)); }
+  #timecode { right: 3.4vw; bottom: 6vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.78vw; letter-spacing: 0.14em; color: var(--faint); }
+  #stamp { left: 50%; top: 72vh; text-align: center; font-family: 'Ubuntu Mono', monospace; border: 2px solid var(--acc); padding: 0.9vw 1.6vw; background: rgba(8,9,11,0.85); }
+  #stamp b { display: block; font-size: 1.7vw; letter-spacing: 0.18em; color: var(--acc); font-weight: 700; }
+  #stamp span { display: block; margin-top: 0.4vw; font-size: 0.95vw; color: var(--dim); letter-spacing: 0.06em; }
+  #dim { position: absolute; inset: 0; background: rgba(8,9,11,0.84); backdrop-filter: blur(6px); visibility: hidden; }
+  .scene { position: absolute; inset: 0; visibility: hidden; }
+  .scene h2 { position: absolute; left: 4.6vw; top: 7.5vh; margin: 0; font-weight: 700; font-size: 2.9vw; letter-spacing: 0.02em; }
+  .scene h2 .x, #title .x { color: var(--acc); display: inline-block; transform: skewX(-12deg); }
+  .scene .lede { position: absolute; left: 4.7vw; top: 15.5vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.98vw; color: var(--dim); letter-spacing: 0.05em; }
+  .scene svg.full, .scene canvas.full { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .scene svg text { font-family: 'Ubuntu Mono', monospace; }
+  /* terminal */
+  .term { position: absolute; background: rgba(9,11,15,0.94); border: 1px solid rgba(139,147,161,0.3); }
+  .term .bar { display: flex; justify-content: space-between; padding: 0.55vw 0.9vw; border-bottom: 1px solid rgba(139,147,161,0.2);
+               font-family: 'Ubuntu Mono', monospace; font-size: 0.72vw; letter-spacing: 0.14em; color: var(--dim); }
+  .term .bar b { color: var(--acc); font-weight: 400; }
+  .term pre { margin: 0; padding: 0.9vw 1.1vw 1.1vw; font-family: 'Ubuntu Mono', monospace; font-size: 0.9vw; line-height: 1.55; color: var(--ink); white-space: pre; }
+  .term .c { color: #6c7584; } .term .k { color: var(--acc); } .term .p { color: #6c7584; } .term .w { color: var(--acc2); }
+  .term .cur { display: inline-block; width: 0.5vw; height: 1.05vw; background: var(--acc); vertical-align: -0.15vw; }
+  /* lists */
+  .list { position: absolute; font-family: 'Ubuntu Mono', monospace; }
+  .list .it { display: flex; align-items: baseline; gap: 1.1vw; margin-bottom: 2.1vh; opacity: 0; }
+  .list .ck { color: var(--acc); font-size: 1.25vw; width: 1.6vw; }
+  .list .ck.next { color: var(--acc2); }
+  .list b { font-weight: 400; color: var(--ink); font-size: 1.15vw; letter-spacing: 0.04em; }
+  .list span { color: var(--dim); font-size: 0.92vw; margin-left: 0.6vw; }
+  /* tiles */
+  .tiles { position: absolute; left: 4.7vw; right: 4.7vw; top: 25vh; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.4vw; }
+  .tile { border: 1px solid rgba(139,147,161,0.3); background: rgba(12,15,20,0.85); padding: 1.3vw 1.3vw 1.5vw; opacity: 0; }
+  .tile .n { font-family: 'Ubuntu Mono', monospace; font-size: 0.75vw; letter-spacing: 0.2em; color: var(--acc); }
+  .tile b { display: block; font-size: 1.5vw; margin-top: 0.6vw; font-weight: 700; }
+  .tile span { display: block; font-family: 'Ubuntu Mono', monospace; font-size: 0.86vw; color: var(--dim); margin-top: 0.6vw; line-height: 1.45; }
+  #ossfoot { position: absolute; left: 4.7vw; top: 77vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.95vw; color: var(--dim); letter-spacing: 0.04em; opacity: 0; }
+  #ossfoot b { color: var(--ink); font-weight: 400; }
+  /* end card */
+  #title { left: 4.6vw; top: 13vh; margin: 0; font-weight: 700; font-size: 5.6vw; letter-spacing: 0.04em; line-height: 1; }
+  #sub { left: 4.7vw; top: 25.4vh; margin: 0; font-size: 1.32vw; font-weight: 300; color: #b7bfcc; line-height: 1.45; }
+  #specs { left: 4.7vw; top: 37vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.92vw; color: var(--dim); line-height: 2.25; letter-spacing: 0.05em; }
+  #specs b { color: var(--ink); font-weight: 400; letter-spacing: 0.1em; display: inline-block; width: 9.5vw; }
+  #specs div { border-bottom: 1px solid rgba(139,147,161,0.14); width: 38vw; white-space: nowrap; }
+  #cta { left: 4.7vw; top: 72vh; font-family: 'Ubuntu Mono', monospace; font-size: 1.15vw; color: var(--dim); letter-spacing: 0.04em; }
+  #cta b { color: var(--ink); font-weight: 400; }
+  #cta2 { left: 4.7vw; top: 76vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.9vw; color: var(--dim); letter-spacing: 0.04em; }
+  #cta2 b { color: var(--ink); font-weight: 400; }
+  #credits { left: 4.7vw; bottom: 4.6vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.8vw; color: var(--faint); letter-spacing: 0.06em; }
+  #logos { right: 3.4vw; bottom: 4.5vh; display: flex; gap: 1.2vw; align-items: center; }
+  #logos .lt { background: #f3f5f7; padding: 0.25vw; height: 7vh; box-sizing: border-box; }
+  #logos .lt img { height: 100%; display: block; }
+  #fade { position: absolute; inset: 0; background: #000; }
+  #playhint { display: none; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: auto; cursor: pointer;
+              font-family: 'Ubuntu Mono', monospace; font-size: 1.4vw; letter-spacing: 0.2em; color: var(--acc); border: 1px solid var(--acc); padding: 1vw 2vw; background: rgba(8,9,11,0.9); visibility: visible; }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <svg id="hud"></svg>
+  <div id="tags"></div>
+  <div class="o" id="caption"></div>
+  <div class="o" id="caprule"></div>
+  <div class="o" id="timecode"></div>
+  <div class="o" id="stamp"><b>STOCK BITSTREAM → LITEX GATEWARE</b><span>slogic_16u3.py · LiteX/Migen · USB3-PIPE · the Sipeed DFU loader stays untouched</span></div>
+  <div id="dim"></div>
+
+  <div class="scene" id="arch"><h2>USB3, <span class="x">in the FPGA</span>.</h2>
+    <div class="lede">No USB chip: the GW5AT-15 GTR12 SerDes is the USB3 PHY. PIPE, LTSSM, Link and Protocol layers in the fabric.</div>
+    <svg class="full" id="archsvg" viewBox="0 0 1920 1080"></svg></div>
+
+  <div class="scene" id="cap"><h2>Capture, <span class="x">at 800 MS/s</span>.</h2>
+    <div class="lede">IDES8 deserializers: 8 samples per cycle at 100 MHz. Decimation by N, 4/8/16 channel modes, streamed over Bulk IN.</div>
+    <canvas class="full" id="capcv"></canvas></div>
+
+  <div class="scene" id="sw"><h2>From C <span class="x">to PulseView</span>.</h2>
+    <div class="lede">Layered host stack: low level C access first, sigrok and ngscopeclient on top.</div>
+    <svg class="full" id="swsvg" viewBox="0 0 1920 1080"></svg>
+    <div class="term" id="swterm" style="left:53vw; top:25vh; width:42vw;">
+      <div class="bar"><span>TERMINAL · <b>SIMULATED DEVICE</b></span><span>slogic_util · sigrok-cli</span></div>
+      <pre id="swcode"></pre></div></div>
+
+  <div class="scene" id="upd"><h2>Remote update, <span class="x">safe</span>.</h2>
+    <div class="lede">Update the gateware over USB3 from the running gateware. The Sipeed DFU loader is never written: MODE always gets back to it.</div>
+    <svg class="full" id="updsvg" viewBox="0 0 1920 1080"></svg>
+    <div class="list" id="updlist" style="left:4.7vw; top:58vh;">
+      <div class="it"><span class="ck">✓</span><b>flash probe</b><span>MSPI pads mapped at runtime: JEDEC ID + SFDP</span></div>
+      <div class="it"><span class="ck">✓</span><b>erase · program · verify</b><span>application region only, writes guarded below 0x800000</span></div>
+      <div class="it"><span class="ck">✓</span><b>replug</b><span>the new gateware boots from 0x000000</span></div>
+      <div class="it"><span class="ck">✓</span><b>MODE button</b><span>multiboot to the DFU loader: recovery, stock firmware back</span></div>
+    </div></div>
+
+  <div class="scene" id="oss"><h2>Open source, <span class="x">upstream first</span>.</h2>
+    <div class="lede">Built on the LiteX ecosystem, contributed back: board support, GW5AT-15 transceivers, USB3.</div>
+    <div class="tiles">
+      <div class="tile"><div class="n">SOC</div><b>LiteX · Migen</b><span>SoC builder, cores, CSRs<br>Python HDL</span></div>
+      <div class="tile"><div class="n">BOARD</div><b>LiteX-Boards</b><span>sipeed_slogic16u3<br>platform + target</span></div>
+      <div class="tile"><div class="n">SERDES</div><b>LiteICLink</b><span>GTR12 transceivers<br>GW5AT-15 QUADB/UPARA</span></div>
+      <div class="tile"><div class="n">USB3</div><b>USB3-PIPE</b><span>PHY + Device Core<br>GW5AT-15 Q0, 5 Gb/s</span></div>
+      <div class="tile"><div class="n">HOST</div><b>libslogic</b><span>BSD-2 C library<br>usb + sim transports</span></div>
+      <div class="tile"><div class="n">SIGROK</div><b>sigrok · PulseView</b><span>litex-slogic driver<br>soft triggers, limits</span></div>
+      <div class="tile"><div class="n">SCOPEHAL</div><b>ngscopeclient</b><span>slogic driver<br>TwinLan bridge</span></div>
+      <div class="tile"><div class="n">FILM</div><b>three.js</b><span>this video, rendered<br>in a browser</span></div>
+    </div>
+    <div id="ossfoot">FPGA toolchain: <b>Gowin IDE</b> (vendor) · everything else open source · BSD-2-Clause</div></div>
+
+  <div class="scene" id="tests"><h2>Tested <span class="x">before the hardware</span>.</h2>
+    <div class="lede">Every layer runs against models: gateware in simulation, host stack on a simulated device.</div>
+    <div class="list" id="testlist" style="left:4.7vw; top:27vh;">
+      <div class="it"><span class="ck">✓</span><b>Migen unit tests</b><span>capture (dividers/modes/limits/overflow), flash core with a SPI Flash model</span></div>
+      <div class="it"><span class="ck">✓</span><b>USB3 system simulation</b><span>USB3-PIPE host model ↔ Device Core ↔ SoC: CSRs over EP0, captures over Bulk IN</span></div>
+      <div class="it"><span class="ck">✓</span><b>libslogic</b><span>175 checks on the simulated device: captures, unpacking, flash update guards</span></div>
+      <div class="it"><span class="ck">✓</span><b>sigrok-cli · ngscopeclient bridge</b><span>end-to-end on the simulated device</span></div>
+      <div class="it"><span class="ck">✓</span><b>Gowin build</b><span>GW5AT-15 bitstream: USB3 + capture + flash</span></div>
+      <div class="it"><span class="ck next">→</span><b>hardware bring-up</b><span>next: USB3 link, inputs, rates on the real SLogic16U3</span></div>
+    </div></div>
+
+  <h1 class="o" id="title">SLOGIC<span class="x">16U3</span></h1>
+  <p class="o" id="sub">Open LiteX gateware &amp; host stack<br>for the Sipeed SLogic16U3 USB3 logic analyzer.</p>
+  <div class="o" id="specs">
+    <div><b>CAPTURE</b>16 channels · 4ch@800 · 8ch@400 · 16ch@200 MS/s</div>
+    <div><b>USB3</b>5 Gb/s in the FPGA transceivers · USB3-PIPE</div>
+    <div><b>SOFTWARE</b>libslogic (C) · sigrok/PulseView · ngscopeclient</div>
+    <div><b>UPDATE</b>remote update over USB3 · DFU recovery always</div>
+    <div><b>STATUS</b>gateware built · validated in simulation</div>
+  </div>
+  <div class="o" id="cta">github.com/<b>enjoy-digital/slogic_16u3</b></div>
+  <div class="o" id="cta2">built with <b>LiteX</b> · github.com/enjoy-digital/litex</div>
+  <div class="o" id="credits">BSD-2-CLAUSE · NOT AFFILIATED WITH SIPEED · PINOUT HELP: SLOGIC16U3-TRACE · ENJOY-DIGITAL.FR</div>
+  <div class="o" id="logos"><div class="lt"><img src="litex.svg"></div><div class="lt"><img src="logos/enjoy-digital.png"></div></div>
+  <div class="o" id="playhint">▶ CLICK TO PLAY WITH SOUND</div>
+  <audio id="music" src="music.mp3" preload="auto"></audio>
+  <div id="fade"></div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { buildDevice } from './board.js';
+
+const Q = new URLSearchParams(location.search);
+const W = innerWidth, H = innerHeight;
+const DURATION = window.DURATION = 66.0;      // 33 bars at 120 BPM (music.py), cuts on the bar grid
+const HERO_T = 63.0;
+const STILL = Q.has('still'), CLEAN = Q.has('clean');
+const $ = id => document.getElementById(id);
+const NS = 'http://www.w3.org/2000/svg';
+
+// ---------------------------------------------------------------- utils
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, k) => a + (b - a) * k;
+const win = (t, a, b, f = 0.4) => Math.min(seg(t, a, a + f), 1 - seg(t, b - f, b));
+const E = {
+  inOut: x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2,
+  out: x => 1 - Math.pow(1 - x, 3),
+  outExpo: x => x === 1 ? 1 : 1 - Math.pow(2, -10 * x),
+};
+function show(el, k, dy = 10) { el.style.opacity = k; el.style.transform = (el.dataset.base || '') + ` translateY(${(1 - k) * dy}px)`; el.style.visibility = k > 0.001 ? 'visible' : 'hidden'; }
+function svgEl(parent, tag, attrs = {}, text = null) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text !== null) e.textContent = text;
+  parent.appendChild(e); return e;
+}
+
+// ---------------------------------------------------------------- renderer / studio
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1); renderer.setSize(W, H);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.02).texture;
+scene.background = new THREE.Color(0x08090b);
+scene.fog = new THREE.Fog(0x08090b, 16, 34);
+{
+  const c = document.createElement('canvas'); c.width = c.height = 1024;
+  const g = c.getContext('2d'); g.fillStyle = '#0b0d10'; g.fillRect(0, 0, 1024, 1024);
+  g.strokeStyle = 'rgba(139,147,161,0.06)'; g.lineWidth = 1;
+  for (let i = 0; i <= 1024; i += 32) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 1024); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(1024, i); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 6); t.colorSpace = THREE.SRGBColorSpace;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, metalness: 0.0 }));
+  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+}
+scene.add(new THREE.HemisphereLight(0xd6e0ee, 0x0a0b0e, 0.35));
+const key = new THREE.DirectionalLight(0xffffff, 2.4); key.position.set(5, 9, 6); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = key.shadow.camera.bottom = -5; key.shadow.camera.right = key.shadow.camera.top = 5;
+key.shadow.bias = -0.0005; key.shadow.radius = 6; scene.add(key);
+const rim = new THREE.DirectionalLight(0xbcd2ff, 1.2); rim.position.set(-6, 5, -8); scene.add(rim);
+
+const D = buildDevice();
+const rig = new THREE.Group(); rig.add(D.root); scene.add(rig);
+D.root.position.set(0, 0, 0);
+
+const camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100);
+
+// Data path pulses along the board path.
+const trailGeo = new THREE.TubeGeometry(D.path, 200, 0.018, 8, false);
+const trailMat = new THREE.MeshBasicMaterial({ color: 0x5cff8a, transparent: true, opacity: 0, depthWrite: false });
+const trail = new THREE.Mesh(trailGeo, trailMat); D.pcb.add(trail);
+const pulseMat = new THREE.MeshBasicMaterial({ color: 0xc8ffd8, transparent: true, opacity: 0 });
+const pulses = Array.from({ length: 10 }, () => { const m = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), pulseMat); D.pcb.add(m); return m; });
+
+// ---------------------------------------------------------------- HUD callouts
+const hud = $('hud'), tags = $('tags');
+function callout(anchorFn, title, sub, dx, dy) {
+  const g = svgEl(hud, 'g', { opacity: 0 });
+  const ln = svgEl(g, 'polyline', { class: 'ln' });
+  const dot = svgEl(g, 'circle', { r: 5 });
+  const tag = document.createElement('div'); tag.className = 'tag';
+  tag.innerHTML = `<div class="t">${title}</div><div class="s">${sub}</div>`; tags.appendChild(tag);
+  return { anchorFn, g, ln, dot, tag, dx, dy };
+}
+function proj(v) { const p = v.clone().project(camera); return [(p.x + 1) / 2 * W, (1 - p.y) / 2 * H]; }
+function placeCallout(c, k) {
+  const [ax, ay] = proj(c.anchorFn());
+  const lx = ax + c.dx * W, ly = ay + c.dy * H;
+  const ex = lx + (c.dx > 0 ? -0.02 : 0.02) * W;
+  const kk = E.out(k);
+  const mx = lerp(ax, ex, kk), my = lerp(ay, ly, kk);
+  c.ln.setAttribute('points', `${ax},${ay} ${mx},${my} ${lerp(ax, lx, kk)},${my}`);
+  c.dot.setAttribute('cx', ax); c.dot.setAttribute('cy', ay);
+  c.g.setAttribute('opacity', k);
+  c.tag.style.left = `${c.dx > 0 ? lx + 8 : lx - 8}px`; c.tag.style.top = `${ly - 0.028 * H}px`;
+  c.tag.style.transform = c.dx > 0 ? 'none' : 'translateX(-100%)';
+  c.tag.style.textAlign = c.dx > 0 ? 'left' : 'right';
+  c.tag.style.opacity = seg(k, 0.4, 1); c.tag.style.visibility = k > 0.01 ? 'visible' : 'hidden';
+}
+const rootW = v => () => D.root.localToWorld(v.clone());
+const pcbW = v => () => D.pcb.localToWorld(v.clone());
+const A = D.anchors;
+const C_OUT = [
+  [callout(rootW(A.header), '16 INPUTS', 'CH0-CH15 · 2x10 header · 0.47 dividers', -0.12, 0.10), 4.4, 7.2],
+  [callout(rootW(new THREE.Vector3(1.4, 1.0, 1.2)), 'ALUMINUM CASE', '40 × 40 × 10 mm', 0.10, -0.16), 4.9, 7.2],
+  [callout(rootW(A.usb), 'USB-C · 5 GB/S', 'SuperSpeed, no USB chip', -0.16, -0.20), 7.9, 9.9],
+  [callout(rootW(A.led), 'LED', 'on: USB3 U0 · blinks: capturing', 0.10, -0.17), 8.2, 9.9],
+  [callout(rootW(A.mode), 'MODE', 'back to the Sipeed DFU loader', 0.10, 0.12), 8.5, 9.9],
+];
+const C_IN = [
+  [callout(pcbW(A.fpga), 'GOWIN GW5AT-15', '15K LUT4 · GTR12 SerDes · MBGA132', 0.13, -0.17), 11.4, 13.9],
+  [callout(pcbW(A.flash), 'SPI FLASH 16MB', 'gateware 0x000000 · DFU loader 0x800000', -0.13, -0.13), 11.8, 13.9],
+  [callout(pcbW(A.osc), '125 MHZ OSCILLATOR', 'GTR12 reference clock', 0.12, 0.08), 12.2, 13.9],
+  [callout(pcbW(A.mux), 'VL162', 'USB-C orientation mux', 0.13, -0.05), 12.6, 13.9],
+  [callout(pcbW(A.dividers), 'INPUT DIVIDERS', 'LVCMOS inputs, ~1.6 V threshold', -0.12, 0.11), 12.9, 13.9],
+];
+const C_PATH = [
+  [callout(pcbW(A.dividers), 'SAMPLER', 'IDES8 · 800 MS/s base', -0.13, 0.08), 15.0, 19.6],
+  [callout(pcbW(A.fpga), 'CAPTURE + USB3 CORE', 'decimation · packer · Bulk IN', 0.13, -0.16), 15.6, 19.6],
+  [callout(pcbW(A.mux), 'GTR12 → USB-C', 'PIPE · LTSSM · 5 Gb/s', 0.12, 0.02), 16.2, 19.6],
+];
+const ALL_CALLOUTS = [...C_OUT, ...C_IN, ...C_PATH];
+
+// ---------------------------------------------------------------- architecture scene
+const archsvg = $('archsvg');
+const ARCH = { boxes: [], links: [], flows: [] };
+{
+  const defs = svgEl(archsvg, 'defs');
+  const mk = svgEl(defs, 'marker', { id: 'ah', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto' });
+  svgEl(mk, 'path', { d: 'M0,0 L10,5 L0,10 z', fill: '#5cff8a' });
+  const row = [
+    ['CH0-CH15', 'LVCMOS inputs', 'io'],
+    ['SAMPLER', 'IDES8 · ×8/cycle', 'sample'],
+    ['CAPTURE', '/N · 4/8/16ch · pack', 'sample'],
+    ['FIFO', 'CDC · 64-bit', 'sys'],
+    ['USB3 CORE', 'Link · Bulk IN', 'sys'],
+    ['USB3 PHY', 'PIPE · LTSSM', 'tx'],
+    ['GTR12', 'SerDes Q0 · 5 Gb/s', 'tx'],
+    ['USB-C', 'host', 'io'],
+  ];
+  const bw = 186, bh = 104, gap = 34, x0 = (1920 - (8 * bw + 7 * gap)) / 2, y = 400;
+  const cdc = { io: '#8b93a1', sample: '#ffb347', sys: '#5cff8a', tx: '#4fc3ff' };
+  row.forEach(([t, s, cd], i) => {
+    const x = x0 + i * (bw + gap);
+    const g = svgEl(archsvg, 'g', { opacity: 0 });
+    svgEl(g, 'rect', { x, y, width: bw, height: bh, fill: 'rgba(12,15,20,0.92)', stroke: cdc[cd], 'stroke-width': 2 });
+    svgEl(g, 'text', { x: x + bw / 2, y: y + 44, 'text-anchor': 'middle', fill: '#e9edf3', 'font-size': 23, 'letter-spacing': 2 }, t);
+    svgEl(g, 'text', { x: x + bw / 2, y: y + 76, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 16 }, s);
+    ARCH.boxes.push({ g, t0: 0.4 + i * 0.35 });
+    if (i < row.length - 1) {
+      const l = svgEl(archsvg, 'line', { x1: x + bw + 2, y1: y + bh / 2, x2: x + bw + gap - 4, y2: y + bh / 2, stroke: '#5cff8a', 'stroke-width': 2.5, 'marker-end': 'url(#ah)', opacity: 0 });
+      ARCH.links.push({ l, t0: 0.6 + i * 0.35 });
+    }
+  });
+  // clock domains
+  const doms = [['sample · 100 MHz', 1, 2, '#ffb347'], ['sys · 62.5 MHz · 64-bit', 3, 4, '#5cff8a'], ['tx · 125 MHz', 5, 6, '#4fc3ff']];
+  for (const [t, a, b, col] of doms) {
+    const xa = x0 + a * (bw + gap), xb = x0 + b * (bw + gap) + bw;
+    const g = svgEl(archsvg, 'g', { opacity: 0 });
+    svgEl(g, 'line', { x1: xa, y1: y - 30, x2: xb, y2: y - 30, stroke: col, 'stroke-width': 2, 'stroke-dasharray': '6 6' });
+    svgEl(g, 'text', { x: (xa + xb) / 2, y: y - 44, 'text-anchor': 'middle', fill: col, 'font-size': 17, 'letter-spacing': 1.5 }, t);
+    ARCH.boxes.push({ g, t0: 3.4 });
+  }
+  // control/update row
+  const ctl = [
+    ['EP0 WISHBONE', 'CommUSB · CSR accesses', 4],
+    ['ANALYZER CSRS', 'mode · divider · limit', 2],
+    ['FLASH CORE', 'MSPI · remote update', 3],
+  ];
+  const yc = 680;
+  ctl.forEach(([t, s, col], i) => {
+    const x = x0 + col * (bw + gap) - (i === 2 ? 0 : 0);
+    const g = svgEl(archsvg, 'g', { opacity: 0 });
+    svgEl(g, 'rect', { x, y: yc, width: bw, height: bh, fill: 'rgba(12,15,20,0.92)', stroke: '#8b93a1', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' });
+    svgEl(g, 'text', { x: x + bw / 2, y: yc + 44, 'text-anchor': 'middle', fill: '#e9edf3', 'font-size': 20, 'letter-spacing': 1.5 }, t);
+    svgEl(g, 'text', { x: x + bw / 2, y: yc + 76, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 15 }, s);
+    ARCH.boxes.push({ g, t0: 3.0 + i * 0.3 });
+  });
+  const xEp0 = x0 + 4 * (bw + gap), xAn = x0 + 2 * (bw + gap), xFl = x0 + 3 * (bw + gap);
+  const bus = svgEl(archsvg, 'g', { opacity: 0 });
+  svgEl(bus, 'line', { x1: xEp0 + bw / 2, y1: y + bh, x2: xEp0 + bw / 2, y2: yc, stroke: '#8b93a1', 'stroke-width': 2 });
+  svgEl(bus, 'line', { x1: xAn + bw / 2, y1: yc + bh + 30, x2: xEp0 + bw / 2, y2: yc + bh + 30, stroke: '#8b93a1', 'stroke-width': 2 });
+  for (const xx of [xAn, xFl, xEp0]) svgEl(bus, 'line', { x1: xx + bw / 2, y1: yc + bh, x2: xx + bw / 2, y2: yc + bh + 30, stroke: '#8b93a1', 'stroke-width': 2 });
+  svgEl(bus, 'line', { x1: xAn + bw / 2, y1: yc, x2: xAn + bw / 2, y2: y + bh, stroke: '#8b93a1', 'stroke-width': 2, 'stroke-dasharray': '4 4' });
+  svgEl(bus, 'text', { x: (xAn + xEp0) / 2 + bw / 2, y: yc + bh + 58, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 16, 'letter-spacing': 2 }, 'CSR BUS · litex_server --usb · libslogic');
+  ARCH.boxes.push({ g: bus, t0: 3.8 });
+  // flowing samples along the main row
+  for (let i = 0; i < 7; i++) ARCH.flows.push(svgEl(archsvg, 'circle', { r: 4.5, fill: '#c8ffd8', opacity: 0 }));
+  ARCH.x0 = x0; ARCH.bw = bw; ARCH.gap = gap; ARCH.y = y + bh / 2;
+  const foot = svgEl(archsvg, 'text', { x: 960, y: 960, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 20, 'letter-spacing': 1.5, opacity: 0 },
+    'USB3 PHY + Device Core + capture + flash core in a 15K LUT GW5AT-15 · 2/2 PLLs');
+  ARCH.boxes.push({ g: foot, t0: 4.4 });
+}
+function placeArch(T, k) {
+  const s = $('arch'); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+  if (k <= 0.001) return;
+  const t = T - 20.0;
+  for (const b of ARCH.boxes) b.g.setAttribute('opacity', E.out(seg(t, b.t0, b.t0 + 0.4)));
+  for (const l of ARCH.links) l.l.setAttribute('opacity', E.out(seg(t, l.t0, l.t0 + 0.4)));
+  const kf = seg(t, 3.2, 3.6);
+  ARCH.flows.forEach((c, i) => {   // samples crossing the links
+    const u = ((t * 1.6 - i * 0.18) % 1 + 1) % 1, xs = ARCH.x0 + (i + 1) * ARCH.bw + i * ARCH.gap;
+    c.setAttribute('cx', xs + 4 + u * (ARCH.gap - 14)); c.setAttribute('cy', ARCH.y - 12);
+    c.setAttribute('opacity', kf * 0.9 * Math.sin(Math.PI * u));
+  });
+}
+
+// ---------------------------------------------------------------- capture scene (waveforms)
+const capcv = $('capcv'); capcv.width = W; capcv.height = H;
+const cg = capcv.getContext('2d');
+function uartBits(text, period, start) {   // [t0, t1, level] runs, idle high, 8N1, LSB first
+  const runs = [], dec = []; let t = start;
+  for (const ch of text) {
+    const b = ch.charCodeAt(0), bits = [0, ...Array.from({ length: 8 }, (_, i) => (b >> i) & 1), 1];
+    dec.push([t, t + 10 * period, ch]);
+    bits.forEach(v => { runs.push([t, t + period, v]); t += period; });
+    t += period * 2;
+  }
+  return { runs, dec, end: t };
+}
+const UART = uartBits('LiteX SLogic16U3 · USB3 ', 7, 20);
+function level(runs, t, idle = 1) { for (const [a, b, v] of runs) if (t >= a && t < b) return v; return idle; }
+const SPI_BYTES = [0x9f, 0xef, 0x40, 0x18, 0x5a, 0x53, 0x46, 0x44, 0x50];
+function spi(t) {   // CS low during frames of 8 bytes, SCK period 6
+  const frame = 9 * 8 * 6 + 60, u = ((t % frame) + frame) % frame;
+  if (u < 30 || u >= 30 + 9 * 48) return { cs: 1, sck: 0, mosi: 0 };
+  const k = u - 30, bit = Math.floor(k / 6), byte = SPI_BYTES[Math.floor(bit / 8) % SPI_BYTES.length];
+  return { cs: 0, sck: (k % 6) >= 3 ? 1 : 0, mosi: (byte >> (7 - (bit % 8))) & 1 };
+}
+const TRACES = [
+  ['CH0', 'UART TX', t => level(UART.runs, ((t % UART.end) + UART.end) % UART.end)],
+  ['CH1', 'SPI CS#', t => spi(t).cs],
+  ['CH2', 'SPI SCK', t => spi(t).sck],
+  ['CH3', 'SPI MOSI', t => spi(t).mosi],
+  ['CH4', 'PWM', t => ((t % 40) + 40) % 40 < 8 + 24 * (0.5 + 0.5 * Math.sin(t / 160)) ? 1 : 0],
+  ['CH5', 'CLK', t => Math.floor(t / 3) % 2],
+  ['CH6', 'STROBE', t => (Math.floor(t / 97) % 5 === 0) ? 1 : 0],
+  ['CH7', 'GPIO', t => (Math.floor(t / 230) % 2)],
+];
+function placeCapture(T, k) {
+  const s = $('cap'); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+  if (k <= 0.001) return;
+  const t = T - 26.0;
+  cg.clearRect(0, 0, W, H);
+  const x0 = 0.12 * W, x1 = 0.66 * W, y0 = 0.27 * H, dy = 0.075 * H, amp = 0.032 * H;
+  const span = 520, off = t * 70;            // samples on screen, scroll speed
+  cg.font = `${0.009 * W}px Ubuntu Mono`; cg.textBaseline = 'middle';
+  TRACES.forEach(([name, what, f], i) => {
+    const ki = E.out(seg(t, 0.3 + i * 0.15, 0.8 + i * 0.15)), y = y0 + i * dy;
+    cg.globalAlpha = ki;
+    cg.fillStyle = '#5cff8a'; cg.textAlign = 'right'; cg.fillText(name, x0 - 0.055 * W, y);
+    cg.fillStyle = '#8b93a1'; cg.fillText(what, x0 - 0.008 * W, y);
+    cg.strokeStyle = 'rgba(139,147,161,0.18)'; cg.lineWidth = 1; cg.beginPath(); cg.moveTo(x0, y + amp / 2); cg.lineTo(x1, y + amp / 2); cg.stroke();
+    cg.strokeStyle = i === 0 ? '#5cff8a' : i < 4 ? '#ffb347' : '#c9d0dc'; cg.lineWidth = 2;
+    cg.beginPath();
+    let prev = null;
+    const xr = lerp(x0, x1, ki);
+    for (let px = x0; px <= xr; px += 1) {
+      const smp = off + (px - x0) / (x1 - x0) * span, v = f(smp), yy = y + amp / 2 - v * amp;
+      if (prev === null) cg.moveTo(px, yy); else if (prev !== yy) { cg.lineTo(px, prev); cg.lineTo(px, yy); }
+      prev = yy;
+    }
+    cg.lineTo(xr, prev); cg.stroke();
+  });
+  // UART decoder annotations
+  cg.globalAlpha = seg(t, 1.6, 2.0);
+  for (let rep = -1; rep <= 2; rep++) for (const [a, b, ch] of UART.dec) {
+    const sa = a + rep * UART.end, sb = b + rep * UART.end;
+    const xa = x0 + (sa - off) / span * (x1 - x0), xb = x0 + (sb - off) / span * (x1 - x0);
+    if (xb < x0 || xa > x1) continue;
+    const ya = y0 - 0.055 * H;
+    cg.fillStyle = 'rgba(92,255,138,0.14)'; cg.strokeStyle = 'rgba(92,255,138,0.6)'; cg.lineWidth = 1;
+    const ca = Math.max(xa, x0), cb = Math.min(xb, x1);
+    cg.fillRect(ca, ya - 0.012 * H, cb - ca, 0.024 * H); cg.strokeRect(ca, ya - 0.012 * H, cb - ca, 0.024 * H);
+    if (xa >= x0 && xb <= x1) {
+      cg.fillStyle = '#e9edf3'; cg.textAlign = 'center';
+      cg.fillText(ch === ' ' ? 'SP 20' : ch === '·' ? 'b7' : `'${ch}' ${ch.charCodeAt(0).toString(16).padStart(2, '0')}`, (xa + xb) / 2, ya);
+    }
+  }
+  cg.globalAlpha = 1;
+  // rates panel
+  const px = 0.71 * W, pw = 0.25 * W;
+  const rates = [['4 CH', 800, '8 samples/cycle · /1'], ['8 CH', 400, '/2'], ['16 CH', 200, '/4 · 3.2 Gb/s']];
+  rates.forEach(([n, r, s], i) => {
+    const kr = E.out(seg(t, 2.2 + i * 0.35, 3.0 + i * 0.35)), y = 0.32 * H + i * 0.13 * H;
+    cg.globalAlpha = seg(t, 2.2 + i * 0.35, 2.5 + i * 0.35);
+    cg.fillStyle = '#e9edf3'; cg.textAlign = 'left'; cg.font = `${0.012 * W}px Ubuntu Mono`; cg.fillText(n, px, y);
+    cg.fillStyle = 'rgba(139,147,161,0.2)'; cg.fillRect(px, y + 0.022 * H, pw, 0.022 * H);
+    cg.fillStyle = '#5cff8a'; cg.fillRect(px, y + 0.022 * H, pw * r / 800 * kr, 0.022 * H);
+    cg.font = `${0.0105 * W}px Ubuntu Mono`; cg.fillStyle = '#e9edf3'; cg.textAlign = 'right';
+    cg.fillText(`${Math.round(r * kr)} MS/s`, px + pw, y);
+    cg.fillStyle = '#8b93a1'; cg.textAlign = 'left'; cg.font = `${0.0088 * W}px Ubuntu Mono`; cg.fillText(s, px, y + 0.065 * H);
+  });
+  cg.globalAlpha = seg(t, 3.8, 4.2);
+  cg.fillStyle = '#8b93a1'; cg.font = `${0.0092 * W}px Ubuntu Mono`; cg.textAlign = 'left';
+  cg.fillText('all rates: 800 MHz / N', px, 0.73 * H);
+  cg.fillText('sample clock from the 125 MHz oscillator', px, 0.76 * H);
+  cg.fillText('test pattern: end-to-end check, no probes', px, 0.79 * H);
+  cg.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------- software scene
+const swsvg = $('swsvg'); const SW = [];
+{
+  const box = (x, y, w, h, t, s, col, t0) => {
+    const g = svgEl(swsvg, 'g', { opacity: 0 });
+    svgEl(g, 'rect', { x, y, width: w, height: h, fill: 'rgba(12,15,20,0.92)', stroke: col, 'stroke-width': 2 });
+    svgEl(g, 'text', { x: x + 22, y: y + 40, fill: '#e9edf3', 'font-size': 22, 'letter-spacing': 1.5 }, t);
+    svgEl(g, 'text', { x: x + 22, y: y + 70, fill: '#8b93a1', 'font-size': 16 }, s);
+    SW.push({ g, t0 });
+  };
+  const x = 90, w = 870;
+  box(x, 790, w, 96, 'SLOGIC16U3 GATEWARE', 'USB3: EP0 CSRs (CommUSB) · Bulk IN capture data · flash core', '#8b93a1', 0.3);
+  box(x, 660, w, 96, 'LIBSLOGIC · C', 'libusb transport · simulated device · capture/unpack · flash update · DFU client', '#5cff8a', 0.7);
+  box(x, 500, 270, 124, 'TOOLS', 'slogic_util · slogic_record', '#ffb347', 1.1);
+  box(x + 300, 500, 270, 124, 'SIGROK', 'litex-slogic driver', '#ffb347', 1.3);
+  box(x + 600, 500, 270, 124, 'SCOPEHAL', 'TwinLan bridge', '#ffb347', 1.5);
+  box(x + 300, 330, 270, 110, 'PULSEVIEW', 'sigrok-cli · decoders', '#4fc3ff', 1.9);
+  box(x + 600, 330, 270, 110, 'NGSCOPECLIENT', 'driver "slogic"', '#4fc3ff', 2.1);
+  box(x, 330, 270, 110, 'YOUR CODE', 'C API · regs · streams', '#4fc3ff', 2.3);
+}
+const SWCODE = [
+  ['<span class="p">$</span> slogic_util -d sim info', 0],
+  ['Device     : SLogic16U3 LiteX', 1], ['Base rate  : 800 MHz (8 samples/cycle)', 1],
+  ['Max rate   : 4ch 800 MHz · 8ch 400 MHz · 16ch 200 MHz', 1],
+  ['<span class="p">$</span> slogic_util -d sim check', 0],
+  ['16 ch @ 200 MHz: <span class="k">OK</span> (100000 samples, 0 errors)', 1],
+  ['<span class="k">99/99 OK</span>', 1],
+  ['<span class="p">$</span> sigrok-cli -d litex-slogic:conn=sim -C CH0-CH3 \\', 0],
+  ['      -c samplerate=800M:pattern=counter --samples 16 -O hex', 0],
+  ['CH0:55 55', 1], ['CH1:33 33', 1], ['CH2:0f 0f', 1],
+  ['<span class="p">$</span> slogic_scopehal_bridge -d sim', 0],
+  ['<span class="c">Bridge ready: SCPI port 5025, waveform port 5026</span>', 1],
+];
+function plainLen(h) { return h.replace(/<[^>]+>/g, '').length; }
+function typedCode(T) {
+  const t = T - 34.0;
+  let out = '', budget = Math.max(0, (t - 0.8) * 70);
+  for (const [line, instant] of SWCODE) {
+    const n = plainLen(line);
+    if (budget <= 0) break;
+    if (instant) { out += line + '\n'; budget -= 6; continue; }
+    if (budget >= n) { out += line + '\n'; budget -= n; }
+    else {   // partial typed command (plain prefix, markup kept on the prompt)
+      const plain = line.replace(/<[^>]+>/g, '');
+      out += plain.slice(0, Math.floor(budget)).replace(/</g, '&lt;') + '<span class="cur"></span>';
+      budget = 0; break;
+    }
+  }
+  return out;
+}
+let lastCode = '';
+function placeSoftware(T, k) {
+  const s = $('sw'); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+  if (k <= 0.001) return;
+  const t = T - 34.0;
+  for (const b of SW) b.g.setAttribute('opacity', E.out(seg(t, b.t0, b.t0 + 0.4)));
+  show($('swterm'), E.outExpo(seg(t, 0.5, 0.9)), 12);
+  const html = typedCode(T);
+  if (html !== lastCode) { $('swcode').innerHTML = html; lastCode = html; }
+}
+
+// ---------------------------------------------------------------- update scene
+const updsvg = $('updsvg'); const UPD = {};
+{
+  const x0 = 90, x1 = 1830, y = 300, h = 120, xm = (x0 + x1) / 2;
+  UPD.bg = svgEl(updsvg, 'rect', { x: x0, y, width: x1 - x0, height: h, fill: 'rgba(12,15,20,0.9)', stroke: '#8b93a1', 'stroke-width': 1.5 });
+  UPD.fill = svgEl(updsvg, 'rect', { x: x0 + 2, y: y + 2, width: 0, height: h - 4, fill: 'rgba(92,255,138,0.22)' });
+  svgEl(updsvg, 'rect', { x: xm, y: y + 2, width: x1 - xm - 2, height: h - 4, fill: 'rgba(255,179,71,0.10)' });
+  svgEl(updsvg, 'line', { x1: xm, y1: y - 20, x2: xm, y2: y + h + 20, stroke: '#ffb347', 'stroke-width': 2.5 });
+  svgEl(updsvg, 'text', { x: x0 + 24, y: y + 50, fill: '#e9edf3', 'font-size': 26, 'letter-spacing': 2 }, 'APPLICATION · LITEX GATEWARE');
+  svgEl(updsvg, 'text', { x: x0 + 24, y: y + 88, fill: '#8b93a1', 'font-size': 18 }, 'loaded at power-up · updated over USB3 (slogic_util flash update)');
+  svgEl(updsvg, 'text', { x: xm + 24, y: y + 50, fill: '#ffb347', 'font-size': 26, 'letter-spacing': 2 }, 'SIPEED DFU LOADER · GOLDEN');
+  svgEl(updsvg, 'text', { x: xm + 24, y: y + 88, fill: '#8b93a1', 'font-size': 18 }, 'never written · MODE button / fallback on a bad image');
+  // lock
+  const lk = svgEl(updsvg, 'g', { transform: `translate(${x1 - 80},${y + 34})` });
+  svgEl(lk, 'rect', { x: 0, y: 20, width: 40, height: 32, rx: 4, fill: 'none', stroke: '#ffb347', 'stroke-width': 3 });
+  svgEl(lk, 'path', { d: 'M8,20 v-8 a12,12 0 0 1 24,0 v8', fill: 'none', stroke: '#ffb347', 'stroke-width': 3 });
+  for (const [x, l] of [[x0, '0x000000'], [xm, '0x800000'], [x1, '0xFFFFFF']])
+    svgEl(updsvg, 'text', { x, y: y + h + 48, 'text-anchor': x === x1 ? 'end' : x === x0 ? 'start' : 'middle', fill: '#8b93a1', 'font-size': 18 }, l);
+  svgEl(updsvg, 'text', { x: x0, y: y - 30, fill: '#8b93a1', 'font-size': 18, 'letter-spacing': 3 }, 'CONFIGURATION SPI FLASH · 16 MB');
+  UPD.x0 = x0; UPD.w = (xm - x0) * 0.42; UPD.pct = svgEl(updsvg, 'text', { x: x0, y: y + h + 82, fill: '#5cff8a', 'font-size': 20 }, '');
+}
+function placeUpdate(T, k) {
+  const s = $('upd'); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+  if (k <= 0.001) return;
+  const t = T - 40.0;
+  const p = seg(t, 1.2, 4.2);
+  UPD.fill.setAttribute('width', UPD.w * p);
+  const step = p < 0.34 ? 'erase' : p < 0.67 ? 'program' : 'verify';
+  UPD.pct.textContent = p > 0 ? `${p < 1 ? step : 'verified'} · ${Math.round(p * 100)}%` : '';
+  document.querySelectorAll('#updlist .it').forEach((e, i) => { const ki = E.out(seg(t, 1.0 + i * 0.9, 1.4 + i * 0.9)); e.style.opacity = ki; e.style.transform = `translateX(${(1 - ki) * 20}px)`; });
+}
+
+function placeScene(id, T, a, k, step) {
+  const s = $(id); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+  if (k <= 0.001) return;
+  s.querySelectorAll('.tile, .list .it').forEach((e, i) => { const ki = E.out(seg(T, a + i * step, a + i * step + 0.5)); e.style.opacity = ki; e.style.transform = `translateY(${(1 - ki) * 14}px)`; });
+  const f = s.querySelector('#ossfoot'); if (f) f.style.opacity = seg(T, a + 8 * step + 0.3, a + 8 * step + 0.8);
+}
+
+// ---------------------------------------------------------------- captions
+const CAPS = [
+  [0.6, 3.8, '01', 'Sipeed SLogic16U3', '16 channels · USB3 logic analyzer'],
+  [4.2, 9.8, '02', 'The hardware', '40 × 40 × 10 mm · aluminum'],
+  [10.2, 13.8, '03', 'Inside', 'Gowin GW5AT-15 · no USB chip'],
+  [14.2, 19.6, '04', 'The data path', 'inputs → FPGA → USB3 transceiver'],
+];
+
+// ---------------------------------------------------------------- camera / device poses
+const POSES = [   // [T, camPos, target, rotY, explode]
+  [0.0,  [7.5, 5.2, 10.5], [0, 0.3, 0], 0.9, 0],
+  [4.0,  [6.0, 4.6, 8.6],  [0, 0.4, 0], 0.45, 0],
+  [7.2,  [6.0, 4.6, 8.6],  [0, 0.4, 0], 0.30, 0],
+  [8.0,  [6.0, 4.4, 8.6],  [0, 0.4, 0], Math.PI + 0.55, 0],
+  [9.8,  [6.0, 4.4, 8.6],  [0, 0.4, 0], Math.PI + 0.45, 0],
+  [10.8, [4.2, 8.6, 7.4],  [0, 0.6, 0], 0.15, 0],
+  [11.6, [3.6, 9.4, 6.4],  [0, 0.6, 0], 0.10, 1],
+  [14.0, [3.6, 9.4, 6.4],  [0, 0.6, 0], 0.05, 1],
+  [15.0, [3.4, 9.6, 6.6],  [0, 0.6, 0], 0.00, 1],
+  [20.0, [3.2, 9.4, 6.4],  [0, 0.6, 0], -0.05, 1],
+  [21.0, [6.5, 5.0, 9.0],  [0, 0.4, 0], 0.3, 0],
+  [57.0, [6.5, 5.0, 9.0],  [0, 0.4, 0], 0.3 + 3.6, 0],
+  [58.0, [6.8, 4.6, 9.8],  [-2.6, 0.6, 0], 0.55, 0],
+  [66.0, [6.6, 4.5, 9.5],  [-2.6, 0.6, 0], 0.95, 0],
+];
+function pose(T) {
+  for (let i = 0; i < POSES.length - 1; i++) {
+    const a = POSES[i], b = POSES[i + 1];
+    if (T <= b[0]) {
+      const k = E.inOut(seg(T, a[0], b[0]));
+      return { cam: a[1].map((v, j) => lerp(v, b[1][j], k)), tgt: a[2].map((v, j) => lerp(v, b[2][j], k)), rot: lerp(a[3], b[3], k), ex: lerp(a[4], b[4], k) };
+    }
+  }
+  const z = POSES[POSES.length - 1]; return { cam: z[1], tgt: z[2], rot: z[3], ex: z[4] };
+}
+
+// ---------------------------------------------------------------- render
+window.renderAt = function (T) {
+  const t = T;
+  const p = pose(T);
+  camera.position.set(...p.cam); camera.lookAt(...p.tgt);
+  D.root.rotation.y = p.rot;
+  // exploded view: lid lifts and fades, board rises
+  const ex = p.ex;
+  D.lid.position.y = 2.6 * E.out(ex);
+  D.lidMat.opacity = 1 - ex; D.labelMat.opacity = 1 - ex;
+  D.lidMat.depthWrite = ex < 0.5; D.lid.visible = ex < 0.98;
+  D.hdr.visible = ex < 0.5;
+  D.pcb.position.y = 0.42 + 0.5 * ex;
+  D.hdr.position.y = 0;
+  // LED: off before USB3 (start), on, blinking during the capture scene
+  const ledOn = T > 2.0 ? (T > 26 && T < 34 ? (Math.floor(T * 4) % 2) : 1) : 0;
+  D.ledMat.color.setHex(ledOn ? 0xff3838 : 0x2a0c0c); D.ledGlow.material.opacity = ledOn ? 0.35 : 0;
+
+  // data path
+  const kd = win(t, 14.6, 20.0, 0.5);
+  trailMat.opacity = 0.5 * kd; trail.visible = kd > 0.001;
+  pulseMat.opacity = kd;
+  pulses.forEach((m, i) => { const u = ((T * 0.25 + i / pulses.length) % 1); m.position.copy(D.path.getPoint(u)); m.visible = kd > 0.001; });
+
+  scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+  for (const [c, a, b] of ALL_CALLOUTS) placeCallout(c, STILL ? 0 : win(t, a, b, 0.5));
+
+  // full screen scenes
+  const kA = win(T, 20.0, 26.0, 0.5), kC = win(T, 26.0, 34.0, 0.4), kS = win(T, 34.0, 40.0, 0.4), kU = win(T, 40.0, 46.0, 0.4), kO = win(T, 46.0, 54.0, 0.4), kT = win(T, 54.0, 58.0, 0.4);
+  const kDim = win(T, 20.0, 58.0, 0.5);
+  $('dim').style.opacity = kDim; $('dim').style.visibility = kDim > 0.001 ? 'visible' : 'hidden';
+  placeArch(T, kA); placeCapture(T, kC); placeSoftware(T, kS); placeUpdate(T, kU);
+  placeScene('oss', T, 46.4, kO, 0.35); placeScene('tests', T, 54.2, kT, 0.32);
+  $('hud').style.opacity = $('tags').style.opacity = clamp(1 - kDim);
+
+  // stamp (bitstream swap, bar 6)
+  { const k = STILL || CLEAN ? 0 : Math.min(E.outExpo(seg(T, 12.0, 12.25)), 1 - seg(T, 13.5, 13.9)), st = $('stamp');
+    st.style.opacity = k; st.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+    st.style.transform = `translateX(-50%) scale(${1 + 0.15 * (1 - E.outExpo(seg(T, 12.0, 12.3)))})`; }
+
+  // captions / timecode
+  const cap = CAPS.find(([a, b]) => T >= a - 0.1 && T <= b + 0.3);
+  const ce = $('caption'), cr = $('caprule');
+  if (cap && !STILL && !CLEAN) {
+    ce.innerHTML = `<span class="n">${cap[2]}</span>${cap[3]}<span class="d">${cap[4]}</span>`;
+    const k = Math.min(E.outExpo(seg(T, cap[0], cap[0] + 0.5)), 1 - seg(T, cap[1], cap[1] + 0.3));
+    show(ce, k, 6); cr.style.visibility = 'visible'; cr.style.opacity = k; cr.style.transform = `scaleX(${E.out(seg(T, cap[0], cap[0] + 0.8))})`;
+  } else { show(ce, 0); cr.style.opacity = 0; }
+  const tc = $('timecode');
+  tc.textContent = `SLOGIC16U3 · T+${T.toFixed(2).padStart(5, '0')}`;
+  show(tc, STILL || CLEAN ? 0 : win(T, 0.4, 57.7, 0.4), 0);
+
+  // end card
+  show($('title'), STILL ? 1 : E.outExpo(seg(T, 58.0, 58.2)), 4);
+  for (const [id, a0] of [['sub', 58.5], ['specs', 59.0], ['cta', 59.5], ['cta2', 59.75], ['logos', 60.0], ['credits', 60.25]])
+    show($(id), STILL ? 1 : E.outExpo(seg(T, a0, a0 + 0.6)), 12);
+  $('fade').style.opacity = STILL || CLEAN ? 0 : Math.max(1 - seg(t, 0, 0.7), seg(T, 65.4, 66.0));
+  renderer.render(scene, camera);
+};
+await document.fonts.ready;
+window.renderAt(+(Q.get('t') || HERO_T));
+window.sceneReady = true;
+if (Q.has('play')) {
+  const au = $('music'), hint = $('playhint');
+  let t0 = performance.now(), playing = false;
+  hint.style.display = 'block';
+  hint.onclick = () => { hint.style.display = 'none'; au.currentTime = 0; au.play(); playing = true; };
+  const loop = () => { window.renderAt(playing ? au.currentTime : ((performance.now() - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+  loop();
+}
+</script>
+</body>
+</html>

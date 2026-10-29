@@ -232,12 +232,13 @@ def main():
     parser.add_argument("--no-flash",          action="store_true",     help="Build without the Flash core.")
     parser.add_argument("--place-option",      default=2, type=int,     help="Gowin place algorithm.", choices=[0, 1, 2, 3, 4])
     parser.add_argument("--route-option",      default=1, type=int,     help="Gowin route algorithm.", choices=[0, 1, 2])
+    parser.add_argument("--replicate-resources", default=0, type=int,   help="Gowin resources replication (timings vs logic).", choices=[0, 1])
     args = parser.parse_args()
 
     platform = sipeed_slogic16u3.Platform(toolchain="gowin")
     platform.toolchain.options["place_option"]        = args.place_option
     platform.toolchain.options["route_option"]        = args.route_option
-    platform.toolchain.options["replicate_resources"] = 1
+    platform.toolchain.options["replicate_resources"] = args.replicate_resources
     gowin_distributed_memories(platform)
 
     soc = SLogicSoC(platform,
@@ -253,6 +254,13 @@ def main():
     builder = Builder(soc, output_dir=args.output_dir, csr_csv=os.path.join(args.output_dir, "csr.csv"),
         csr_json=os.path.join(args.output_dir, "csr.json"))
     builder.build(run=args.build)
+
+    # Binary bitstream for the Flash (DFU loader/remote update): Gowin impl/pnr/project.bin.
+    if args.build:
+        import shutil
+        gateware_dir = os.path.join(args.output_dir, "gateware")
+        shutil.copyfile(os.path.join(gateware_dir, "impl", "pnr", "project.bin"),
+            os.path.join(gateware_dir, f"{platform.name}.bin"))
 
     if args.load:
         prog = platform.create_programmer(kit="openfpgaloader")

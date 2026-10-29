@@ -53,6 +53,16 @@ class TestSigrok(unittest.TestCase):
     def test_counter_4ch(self):
         self.check_counter(4, 800_000_000, 9999)
 
+    def test_uart_decode(self):
+        # Simulated inputs: UART 1Mbaud on CH0, decoded by libsigrokdecode.
+        r = self.run_cli("-c", "samplerate=10M", "--samples", "2000000", "-P", "uart:rx=CH0:baudrate=1000000",
+            "-A", "uart=rx-data", "--protocol-decoder-ann-class")
+        if b"protocol decoder" in r.stderr.lower() and r.returncode != 0:
+            self.skipTest("sigrok-cli without libsigrokdecode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = "".join(chr(int(l.split()[-1], 16)) for l in r.stdout.decode().splitlines() if l.strip())
+        self.assertIn("Hello from SLogic16U3!", text)
+
     def test_invalid_config(self):
         r = self.run_cli("-c", "samplerate=400M", "--samples", "10")
         self.assertNotEqual(r.returncode, 0)

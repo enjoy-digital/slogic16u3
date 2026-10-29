@@ -26,29 +26,52 @@ the MODE button always gets back to it, the stock application can be restored at
 Host stack (layered, C first):
 
 ```
- libliteusb (libusb-1.0: EP0 CSR accesses, Bulk IN stream ring)
-   -> libslogic (C API: open/info/configure/capture/stream, flash update, DFU loader client)
-      -> slogic_util (info/regs/flash/update/dfu), slogic_record (capture to file), slogic_check (self-test)
-      -> libsigrok driver (litex-slogic): sigrok-cli, PulseView
-      -> slogic_scopehal_bridge (TwinLan) + scopehal driver: ngscopeclient
- Python: software/slogic.py (bring-up, litex_server/RemoteClient), test models.
+ libslogic (C: USB3 transport on libusb-1.0: EP0 CSR accesses, Bulk IN transfers ring; simulated device)
+   -> slogic_util (info/check/bench/clock/regs/flash/dfu), slogic_record (raw/u8/VCD/CSV)
+   -> libsigrok driver (litex-slogic): sigrok-cli, PulseView
+   -> slogic_scopehal_bridge (TwinLan) + scopehal driver "slogic": ngscopeclient
+ Python: litex_server --usb (CommUSB), test models.
 ```
 
 ## Phases
 
-| #  | Phase                    | Content                                                                                               | Status       |
-|----|--------------------------|-------------------------------------------------------------------------------------------------------|--------------|
-| 0  | Board support            | LiteX-Boards platform/target completed (inputs, LED, osc enable, multiboot to DFU), pinout findings.  | Done (build) |
-| 1  | GW5AT-15 USB3 SerDes     | LiteICLink GTR12_QUADB/UPARA, USB3-PIPE Q0/125MHz configuration (Gowin serdes_toml_to_csr).           | Done (build) |
-| 2  | Gateware cores           | Sampler, Capture (pattern/mode/decimation/packer), Streamer, Flash, Info; unit tests.                 |              |
-| 3  | SoC                      | CRG, USB3 (PHY + Core + EP0 Wishbone + Bulk IN), fixed CSR map, Gowin build (fit/timings).            |              |
-| 4  | System simulation        | USB3 host model <-> Device Core <-> SoC: CSR accesses and pattern captures over Bulk IN.              |              |
-| 5  | C host stack             | libliteusb, libslogic, tools, unit tests (mock transport, sample unpacking, DFU/flash protocols).     |              |
-| 6  | sigrok / PulseView       | libsigrok driver, build script (libsigrok/sigrok-cli/PulseView), tests on a simulated device.         |              |
-| 7  | ngscopeclient            | TwinLan bridge + scopehal driver.                                                                     |              |
-| 8  | Remote update            | Flash pin mapping probe, update (erase/program/verify app region), DFU loader client, recovery.       |              |
-| 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     |              |
-| 10 | Docs                     | README, diagrams, promo video, getting started, recovery.                                             |              |
+| #  | Phase                    | Content                                                                                               | Status            |
+|----|--------------------------|-------------------------------------------------------------------------------------------------------|-------------------|
+| 0  | Board support            | LiteX-Boards platform/target completed (inputs, LED, osc enable, multiboot to DFU), pinout findings.  | Done (build)      |
+| 1  | GW5AT-15 USB3 SerDes     | LiteICLink GTR12_QUADB/UPARA, USB3-PIPE Q0/125MHz configuration (Gowin serdes_toml_to_csr).           | Done (build)      |
+| 2  | Gateware cores           | Sampler (IDES8), Capture (pattern/decimation/modes/packer/limit/overflow), Analyzer, Flash; tests.    | Done (sim)        |
+| 3  | SoC                      | CRG, USB3 (PHY + Core + EP0 Wishbone + Bulk IN), fixed CSR map, Gowin build (fit/timings).            | Fit, timings WIP  |
+| 4  | System simulation        | USB3 host model <-> Device Core <-> SoC: CSR accesses and pattern captures over Bulk IN.              | Done (sim)        |
+| 5  | C host stack             | libslogic (USB3/sim transports), slogic_util/slogic_record, DFU loader client, 175 C checks.          | Done (sim)        |
+| 6  | sigrok / PulseView       | litex-slogic libsigrok driver, build script (libsigrok/libsigrokdecode/sigrok-cli/PulseView), tests.  | Done (sim)        |
+| 7  | ngscopeclient            | slogic_scopehal_bridge (TwinLan) + scopehal driver "slogic" (syntax checked), bridge tests.           | Done (sim)        |
+| 8  | Remote update            | Flash pads probe, update with verify (app region only), DFU loader client, recovery docs.             | Done (sim)        |
+| 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | Next              |
+| 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
+
+## Timing Closure (GW5AT-15, Gowin 1.9.10)
+
+| Clock         | Target   | USB3 only | Full design (best so far) | Critical paths                                         |
+|---------------|----------|-----------|---------------------------|--------------------------------------------------------|
+| sys           | 62.5MHz  | 83.4MHz   | 68.8MHz                   | USB3 Link Layer TX (congestion).                       |
+| tx (PIPE)     | 125MHz   | 126.9MHz  | 124.3MHz                  | USB3-PIPE PIPE TX (congestion).                        |
+| sample        | 100MHz   | -         | 79.1MHz                   | Decimation recurrence (now a table/one adder), limit.  |
+
+The USB3 PHY + Device Core use ~70% of the logic: the full design is at ~91% logic / ~96% CLS, routing and
+timings depend on the placement (Gowin place_option, no seed). Fallbacks: sample clock at 80MHz (640MS/s base),
+`--no-flash` bring-up bitstreams, MaxBurst 4.
+
+## Hardware Bring-up Steps
+
+1. `--no-analyzer --no-flash` bitstream over JTAG (`./slogic_16u3.py --build --load`): USB3 enumeration (`lsusb -t`:
+   5000M, `SLogic16U3 LiteX`), `slogic_util info` (LTSSM U0), `litex_server --usb` CSR accesses.
+2. Full bitstream: `slogic_util check` (counter pattern, all modes/rates), `slogic_util bench` (throughput).
+3. Inputs: IDES8 bit order (Q0 first, from the Gowin model), CH0-CH15 mapping, LVCMOS15UD33 threshold, 800MS/s
+   on 4 channels.
+4. `slogic_util clock`: sample clock accuracy (GTR12 TX clock source).
+5. `slogic_util flash probe`: MSPI pads functions, then defaults in the Flash core/LiteX-Boards.
+6. Updates: `slogic_util dfu update` (first install), `slogic_util flash update` (remote), MODE button recovery.
+7. sigrok-cli/PulseView, ngscopeclient on the hardware.
 
 ## Flash Layout / Update
 
