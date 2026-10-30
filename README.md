@@ -101,12 +101,16 @@ python3 -m pytest test                        # Gateware/system/host tests (Mige
 
 # First install (MODE button: DFU loader, LED blinking red):
 software/user/build/slogic_util dfu dump slogic16u3-backup.bin
-software/user/build/slogic_util dfu update build/gateware/sipeed_slogic16u3.bin
+software/user/build/slogic_util dfu update build/gateware/sipeed_slogic16u3.bin --backup slogic16u3-backup.bin
 # Then remote updates from our gateware:
 software/user/build/slogic_util flash update build/gateware/sipeed_slogic16u3.bin
+# Back to the stock firmware (MODE button):
+software/user/build/slogic_util dfu restore slogic16u3-backup.bin
+./scripts/release.py 0.1.0                    # Release package (gateware, Linux tools, udev, INSTALL.md).
 ```
 
-Update/recovery details: [doc/UPDATE.md](doc/UPDATE.md).
+User guide (release package, no JTAG, back to stock): [doc/INSTALL.md](doc/INSTALL.md). Update/recovery
+details: [doc/UPDATE.md](doc/UPDATE.md).
 
 ## Open Source
 
@@ -124,7 +128,8 @@ This project adds GW5AT-15 support to LiteICLink/USB3-PIPE and completes the SLo
 - [doc/HARDWARE.md](doc/HARDWARE.md): what is known (and missing) about the hardware.
 - [doc/GATEWARE.md](doc/GATEWARE.md): clocks, cores, capture datapath, registers, resources/timings.
 - [doc/SOFTWARE.md](doc/SOFTWARE.md): libslogic, tools, sigrok/PulseView, ngscopeclient, tests.
-- [doc/UPDATE.md](doc/UPDATE.md): flash layout, first install, remote update, recovery.
+- [doc/INSTALL.md](doc/INSTALL.md): user guide: backup, install over DFU, update, back to the stock firmware.
+- [doc/UPDATE.md](doc/UPDATE.md): flash layout, first install, remote update, recovery, release.
 
 ## Credits
 

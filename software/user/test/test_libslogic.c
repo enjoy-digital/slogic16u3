@@ -254,6 +254,28 @@ static void test_generator(void)
     slogic_close(dev);
 }
 
+/* Update image check: GW5AT-15 bitstream header, application region size. */
+static void test_image_check(void)
+{
+    static const uint8_t hdr[] = { 0xff, 0xff, 0xff, 0xff, 0xa5, 0xc3, 0x06, 0x00, 0x00, 0x00,
+                                   0x00, 0x01, 0x68, 0x1b, 0x10, 0x00 };
+    uint8_t *img = malloc(SLOGIC_FLASH_SIZE);
+    char msg[160];
+
+    memset(img, 0xff, SLOGIC_FLASH_SIZE);
+    memcpy(img + 16, hdr, sizeof(hdr));
+    CHECK(slogic_image_check(img, 600000, msg, sizeof(msg)) == SLOGIC_OK);
+    CHECK(slogic_image_check(img, SLOGIC_FLASH_SIZE, msg, sizeof(msg)) == SLOGIC_ERR_ARG); /* Full dump. */
+    CHECK(strstr(msg, "dump") != NULL);
+    CHECK(slogic_image_check(img, 0, NULL, 0) == SLOGIC_ERR_ARG);
+    img[16 + 13] = 0x1c;                                                                   /* Other IDCODE. */
+    CHECK(slogic_image_check(img, 600000, msg, sizeof(msg)) == SLOGIC_ERR_ARG);
+    CHECK(strstr(msg, "IDCODE") != NULL);
+    memset(img, 0x00, 4096);                                                               /* No header. */
+    CHECK(slogic_image_check(img, 600000, msg, sizeof(msg)) == SLOGIC_ERR_ARG);
+    free(img);
+}
+
 static void test_continuous_stop(void)
 {
     struct slogic_dev *dev = open_sim("sim:fast");
@@ -352,6 +374,7 @@ int main(void)
     test_config();
     test_capture_patterns();
     test_generator();
+    test_image_check();
     test_continuous_stop();
     test_overflow();
     test_unpack();

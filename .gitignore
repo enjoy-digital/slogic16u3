@@ -4,6 +4,8 @@ build/
 *.dump
 *.egg-info/
 *-factory.bin
+*-backup.bin
+release/
 # Flash dumps: never committed (contain the Sipeed DFU loader and the unit data).
 node_modules/
 *.o

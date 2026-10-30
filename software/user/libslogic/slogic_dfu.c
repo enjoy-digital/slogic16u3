@@ -255,8 +255,12 @@ void slogic_dfu_close(struct slogic_dfu *d)
 /* Flash */
 /*-------*/
 
-int slogic_dfu_read(struct slogic_dfu *d, uint32_t addr, uint8_t *data, size_t size)
+int slogic_dfu_read(struct slogic_dfu *d, uint32_t addr, uint8_t *data, size_t size,
+                    slogic_progress_cb progress, void *user)
 {
+    size_t total = size, done = 0;
+    if (!d || addr + (uint64_t)size > SLOGIC_FLASH_SIZE)
+        return SLOGIC_ERR_ARG;
     while (size) {
         size_t n = size > DFU_READ_CHUNK ? DFU_READ_CHUNK : size;
         uint8_t cmd[4] = { 0x0b, addr >> 16, addr >> 8, addr }; /* Fast read (1 dummy byte). */
@@ -266,8 +270,46 @@ int slogic_dfu_read(struct slogic_dfu *d, uint32_t addr, uint8_t *data, size_t s
         data += n;
         addr += n;
         size -= n;
+        done += n;
+        if (progress && (done % 65536 == 0 || !size))
+            progress("read", done, total, user);
     }
     return SLOGIC_OK;
+}
+
+int slogic_dfu_check_backup(struct slogic_dfu *d, const uint8_t *backup, size_t size, char *msg,
+                            size_t msg_size)
+{
+    const uint8_t *gold = backup + SLOGIC_FLASH_APP_SIZE;
+    size_t end = SLOGIC_FLASH_SIZE - SLOGIC_FLASH_APP_SIZE;
+    uint8_t *flash;
+    char tmp[1];
+    int r;
+
+    if (!msg) {
+        msg      = tmp;
+        msg_size = sizeof(tmp);
+    }
+    if (!backup || size != SLOGIC_FLASH_SIZE) {
+        snprintf(msg, msg_size, "backup of %zu bytes: a full Flash dump (%u bytes, dfu dump) is needed", size,
+                 SLOGIC_FLASH_SIZE);
+        return SLOGIC_ERR_ARG;
+    }
+    while (end && gold[end - 1] == 0xff)
+        end--;
+    if (!end) {
+        snprintf(msg, msg_size, "no DFU loader at 0x%06x in the backup", SLOGIC_FLASH_APP_SIZE);
+        return SLOGIC_ERR_ARG;
+    }
+    if (!(flash = malloc(end)))
+        return SLOGIC_ERR_NOMEM;
+    r = slogic_dfu_read(d, SLOGIC_FLASH_APP_SIZE, flash, end, NULL, NULL);
+    if (!r && memcmp(flash, gold, end)) {
+        snprintf(msg, msg_size, "the DFU loader in the Flash differs from the backup's: backup of another unit?");
+        r = SLOGIC_ERR_FLASH;
+    }
+    free(flash);
+    return r;
 }
 
 static int dfu_wait(struct slogic_dfu *d, double timeout_s)
@@ -303,7 +345,7 @@ static int dfu_write_op(struct slogic_dfu *d, const uint8_t *cmd, size_t n, doub
 int slogic_dfu_update(struct slogic_dfu *d, const uint8_t *image, size_t size,
                       slogic_progress_cb progress, void *user)
 {
-    size_t blocks = (size + DFU_BLOCK - 1)/DFU_BLOCK;
+    size_t blocks = SLOGIC_FLASH_APP_SIZE/DFU_BLOCK; /* The whole application region. */
     uint8_t *check;
     int r;
 
@@ -317,6 +359,17 @@ int slogic_dfu_update(struct slogic_dfu *d, const uint8_t *image, size_t size,
         if (progress)
             progress("erase", (b + 1)*DFU_BLOCK, blocks*DFU_BLOCK, user);
     }
+    /* Blank check (the image's span). */
+    check = malloc(size);
+    if (!check)
+        return SLOGIC_ERR_NOMEM;
+    r = slogic_dfu_read(d, 0, check, size, NULL, NULL);
+    for (size_t i = 0; !r && i < size; i++)
+        if (check[i] != 0xff)
+            r = SLOGIC_ERR_FLASH;
+    free(check);
+    if (r)
+        return r;
     for (size_t o = 0; o < size; ) {
         size_t n = DFU_WRITE_CHUNK;
         if (n > SLOGIC_FLASH_PAGE - (o % SLOGIC_FLASH_PAGE))
@@ -339,7 +392,7 @@ int slogic_dfu_update(struct slogic_dfu *d, const uint8_t *image, size_t size,
     check = malloc(size);
     if (!check)
         return SLOGIC_ERR_NOMEM;
-    r = slogic_dfu_read(d, 0, check, size);
+    r = slogic_dfu_read(d, 0, check, size, progress, user);
     if (!r && memcmp(check, image, size))
         r = SLOGIC_ERR_FLASH;
     free(check);

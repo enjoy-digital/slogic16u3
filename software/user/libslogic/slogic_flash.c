@@ -286,6 +286,42 @@ int slogic_flash_write(struct slogic_dev *dev, uint32_t addr, const uint8_t *dat
 /* Update */
 /*--------*/
 
+int slogic_image_check(const uint8_t *image, size_t size, char *msg, size_t msg_size)
+{
+    char tmp[1];
+    if (!msg) {
+        msg      = tmp;
+        msg_size = sizeof(tmp);
+    }
+    if (!image || !size) {
+        snprintf(msg, msg_size, "empty image");
+        return SLOGIC_ERR_ARG;
+    }
+    if (size > SLOGIC_FLASH_APP_SIZE) {
+        snprintf(msg, msg_size, "%zu bytes: larger than the application region (%u bytes)%s", size,
+                 SLOGIC_FLASH_APP_SIZE, size == SLOGIC_FLASH_SIZE ? ", a full Flash dump? (dfu restore)" : "");
+        return SLOGIC_ERR_ARG;
+    }
+    /* Gowin bitstream header: 0xff padding, sync word a5c3, then the IDCODE check command (0x06,
+       3 bytes, the 32-bit IDCODE, big-endian). */
+    for (size_t i = 0; i + 10 <= size && i < 1024; i++) {
+        if (image[i] != 0xa5 || image[i + 1] != 0xc3)
+            continue;
+        const uint8_t *c = image + i + 2;
+        uint32_t id = (uint32_t)c[4] << 24 | c[5] << 16 | c[6] << 8 | c[7];
+        if (c[0] != 0x06)
+            break;
+        if (id != SLOGIC_GW5AT15_IDCODE) {
+            snprintf(msg, msg_size, "bitstream for IDCODE 0x%08x, not the GW5AT-15 (0x%08x)", id,
+                     SLOGIC_GW5AT15_IDCODE);
+            return SLOGIC_ERR_ARG;
+        }
+        return SLOGIC_OK;
+    }
+    snprintf(msg, msg_size, "not a Gowin bitstream (no sync word/IDCODE in the header: the .bin file is needed)");
+    return SLOGIC_ERR_ARG;
+}
+
 int slogic_flash_update(struct slogic_dev *dev, const uint8_t *image, size_t size,
                         slogic_progress_cb progress, void *user)
 {

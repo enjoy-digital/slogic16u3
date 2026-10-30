@@ -7,7 +7,7 @@ GW5AT multiboot and nothing in this project ever writes it.
 
 | Region            | Content                                              | Written by                                   |
 |-------------------|------------------------------------------------------|----------------------------------------------|
-| 0x000000-0x7fffff | Application bitstream (this gateware or the stock one). | `slogic_util flash update`, `slogic_util dfu update` |
+| 0x000000-0x7fffff | Application bitstream (this gateware or the stock one). | `slogic_util flash update`, `slogic_util dfu update/restore` |
 | 0x800000-0xffffff | Sipeed DFU loader (golden image).                    | Never (refused by libslogic, both paths).    |
 
 - At power-up the GW5AT loads the application at 0x000000, a corrupted application fails its check and the
@@ -17,13 +17,20 @@ GW5AT multiboot and nothing in this project ever writes it.
 
 ## First Install (from the stock firmware)
 
+User guide with a release package: [INSTALL.md](INSTALL.md).
+
 ```sh
 # MODE button -> DFU loader (LED blinks red).
-slogic_util dfu dump slogic16u3-backup.bin       # Full 16MB backup: keep it private, outside the repository.
-slogic_util dfu update build/gateware/sipeed_slogic16u3.bin
+slogic_util dfu dump slogic16u3-backup.bin       # Full 16MB backup (read twice): keep it private, outside the repository.
+slogic_util dfu update build/gateware/sipeed_slogic16u3.bin --backup slogic16u3-backup.bin
 # Replug: the analyzer enumerates as "SLogic16U3 LiteX" (1d50:605a, 5Gbps).
 slogic_util info
 ```
+
+Safety checks (libslogic, both update paths): the image must be a GW5AT-15 bitstream (sync word and IDCODE
+in its header) that fits the application region (`slogic_image_check`); the DFU path needs the full dump of
+the unit, checked against the Flash's DFU loader region (`slogic_dfu_check_backup`), and erases the whole
+application region before programming (no tail of the previous image left), then verifies.
 
 ## Remote Update (from our gateware)
 
@@ -41,7 +48,15 @@ EP0 burst. If anything goes wrong (power loss, bad image), the GW5AT boots the D
 
 ```sh
 # MODE button -> DFU loader.
-slogic_util dfu update <stock application image>   # From your backup (the first 8MB of slogic16u3-backup.bin).
+slogic_util dfu restore slogic16u3-backup.bin      # The backup's application region (checked, verified).
+```
+
+## Release
+
+```sh
+./scripts/build_best.py                           # Bitstream (timings met) in build/.
+./scripts/release.py 0.1.0                        # release/slogic16u3-0.1.0[.tar.gz]: gateware .bin/.fs,
+                                                  # Linux tools, udev rules, INSTALL.md, BUILDINFO, SHA256SUMS.
 ```
 
 ## Open Points

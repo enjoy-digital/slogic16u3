@@ -85,7 +85,8 @@ pipelining (sample clock), MaxBurst 4.
    on 4 channels.
 4. `slogic_util clock`: sample clock accuracy (GTR12 TX clock source).
 5. `slogic_util flash probe`: MSPI pads functions, then defaults in the Flash core/LiteX-Boards.
-6. Updates: `slogic_util dfu update` (first install), `slogic_util flash update` (remote), MODE button recovery.
+6. Updates: `slogic_util dfu dump/update/restore` (backup, first install, back to stock: doc/INSTALL.md),
+   `slogic_util flash update` (remote), MODE button recovery; then a first release (`scripts/release.py`).
 7. sigrok-cli/PulseView, ngscopeclient on the hardware.
 
 ## Flash Layout / Update

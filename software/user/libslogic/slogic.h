@@ -144,6 +144,7 @@ uint16_t slogic_generator_sample(uint64_t t);
 /* Flash (configuration SPI Flash, remote update) */
 /*-----------------------------------------------*/
 
+#define SLOGIC_FLASH_SIZE        0x1000000 /* 16MB: application (0x000000) + Sipeed DFU loader (0x800000). */
 #define SLOGIC_FLASH_APP_BASE    0x000000
 #define SLOGIC_FLASH_APP_SIZE    0x800000 /* Application region (the DFU loader is above, never written). */
 #define SLOGIC_FLASH_SECTOR      4096
@@ -164,6 +165,10 @@ int slogic_flash_erase(struct slogic_dev *dev, uint32_t addr, size_t size);
 int slogic_flash_write(struct slogic_dev *dev, uint32_t addr, const uint8_t *data, size_t size);
 
 typedef void (*slogic_progress_cb)(const char *step, size_t done, size_t total, void *user);
+/* Application image check: a GW5AT-15 bitstream (sync word and SLOGIC_GW5AT15_IDCODE in its header) that fits
+ * the application region (not a full Flash dump). SLOGIC_OK or SLOGIC_ERR_ARG (msg: reason, may be NULL). */
+#define SLOGIC_GW5AT15_IDCODE 0x0001681b
+int slogic_image_check(const uint8_t *image, size_t size, char *msg, size_t msg_size);
 /* Application update: erase, program and verify image at 0x000000 (replug to boot it). */
 int slogic_flash_update(struct slogic_dev *dev, const uint8_t *image, size_t size,
                         slogic_progress_cb progress, void *user);

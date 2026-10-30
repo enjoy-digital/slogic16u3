@@ -56,6 +56,17 @@ static uint8_t *load_file(const char *path, size_t *size)
     return data;
 }
 
+/* Image check before an update (GW5AT-15 bitstream, application region). */
+static int image_ok(const uint8_t *image, size_t size)
+{
+    char msg[160];
+    if (slogic_image_check(image, size, msg, sizeof(msg))) {
+        fprintf(stderr, "Image refused: %s\n", msg);
+        return 0;
+    }
+    return 1;
+}
+
 static void progress(const char *step, size_t done, size_t total, void *user)
 {
     (void)user;
@@ -287,6 +298,12 @@ static int cmd_flash(int argc, char **argv)
     } else if (!strcmp(argv[0], "update") && argc >= 2) {
         size_t size;
         uint8_t *image = load_file(argv[1], &size);
+        if (!image || !image_ok(image, size)) {
+            free(image);
+            slogic_flash_close(dev);
+            slogic_close(dev);
+            return 1;
+        }
         printf("Updating application (%zu bytes at 0x%06x)...\n", size, SLOGIC_FLASH_APP_BASE);
         r = slogic_flash_update(dev, image, size, progress, NULL);
         printf("%s\n", r ? slogic_strerror(r) : "Done: replug the analyzer to boot the new gateware.");
@@ -297,38 +314,118 @@ static int cmd_flash(int argc, char **argv)
     return r ? 1 : 0;
 }
 
+/* Used 64KB blocks of a Flash dump. */
+static void print_blocks(const uint8_t *data, size_t size)
+{
+    size_t start = 0;
+    int used = 0;
+    for (size_t o = 0; o <= size; o += 65536) {
+        int u = 0;
+        for (size_t i = o; o < size && i < o + 65536 && !u; i++)
+            u = data[i] != 0xff;
+        if (u && !used)
+            start = o;
+        if (!u && used)
+            printf("  used 0x%06zx-0x%06zx (%zu KB)%s\n", start, o - 1, (o - start)/1024,
+                   start >= SLOGIC_FLASH_APP_SIZE ? " DFU loader" : " application");
+        used = u;
+    }
+}
+
+/* Sipeed DFU loader (MODE button): backup, install, restore. The DFU loader (0x800000-) is never written. */
 static int cmd_dfu(int argc, char **argv)
 {
     struct slogic_dfu *dfu;
     uint8_t jedec[3];
-    int r;
+    double t0 = slogic_time();
+    int r = 1;
 
-    if (argc < 1) {
-        fprintf(stderr, "dfu id|dump <file>|update <image.bin>\n");
+    if (argc < 1 || (strcmp(argv[0], "id") && argc < 2)) {
+        fprintf(stderr, "dfu id | dump <backup.bin> | update <image.bin> --backup <backup.bin> | restore <backup.bin>\n");
         return 1;
     }
     if ((r = slogic_dfu_open(&dfu, jedec))) {
-        fprintf(stderr, "DFU loader (%04x:%04x, MODE button): %s\n", SLOGIC_DFU_VID, SLOGIC_DFU_PID,
-                slogic_strerror(r));
+        fprintf(stderr, "DFU loader (%04x:%04x, MODE button: LED blinking red): %s\n", SLOGIC_DFU_VID,
+                SLOGIC_DFU_PID, slogic_strerror(r));
         return 1;
     }
     printf("DFU loader: Flash JEDEC ID %02x %02x %02x\n", jedec[0], jedec[1], jedec[2]);
-    if (!strcmp(argv[0], "dump") && argc >= 2) {
-        size_t size = 16*1024*1024;
-        uint8_t *data = malloc(size);
-        FILE *f = fopen(argv[1], "wb");
-        printf("Dumping the whole Flash (16MB, keep it outside the repository)...\n");
-        r = (!f || slogic_dfu_read(dfu, 0, data, size) || fwrite(data, 1, size, f) != size);
+    if (!strcmp(argv[0], "id")) {
+        r = 0;
+    } else if (!strcmp(argv[0], "dump")) {
+        /* Read twice and compared: the backup is the way back to the stock firmware. */
+        uint8_t *data = malloc(SLOGIC_FLASH_SIZE), *again = malloc(SLOGIC_FLASH_SIZE);
+        FILE *f = NULL;
+        printf("Dumping the whole Flash (16MB, read twice)...\n");
+        r = !data || !again ||
+            slogic_dfu_read(dfu, 0, data, SLOGIC_FLASH_SIZE, progress, NULL) ||
+            slogic_dfu_read(dfu, 0, again, SLOGIC_FLASH_SIZE, progress, NULL);
+        if (!r && memcmp(data, again, SLOGIC_FLASH_SIZE)) {
+            fprintf(stderr, "The two reads differ: retry the dump.\n");
+            r = 1;
+        }
+        if (!r && !(f = fopen(argv[1], "wb")))
+            r = 1;
+        if (!r)
+            r = fwrite(data, 1, SLOGIC_FLASH_SIZE, f) != SLOGIC_FLASH_SIZE;
         if (f)
-            fclose(f);
+            r |= fclose(f) != 0;
+        if (!r) {
+            printf("%s: 16MB backup of this unit (keep it, it is the way back to the stock firmware).\n", argv[1]);
+            print_blocks(data, SLOGIC_FLASH_SIZE);
+        } else {
+            fprintf(stderr, "Dump failed.\n");
+        }
         free(data);
-    } else if (!strcmp(argv[0], "update") && argc >= 2) {
-        size_t size;
-        uint8_t *image = load_file(argv[1], &size);
+        free(again);
+    } else if (!strcmp(argv[0], "update") || !strcmp(argv[0], "restore")) {
+        /* The backup (full dump of this unit) is required: checked against the Flash's DFU loader. */
+        int restore = !strcmp(argv[0], "restore");
+        const char *bpath = restore ? argv[1] : (argc >= 4 && !strcmp(argv[2], "--backup") ? argv[3] : NULL);
+        size_t bsize = 0, size = 0;
+        uint8_t *backup = NULL, *image = NULL;
+        char msg[160];
+
+        if (!bpath) {
+            fprintf(stderr, "dfu update needs --backup <backup.bin>: dump this unit first (dfu dump).\n");
+            goto done;
+        }
+        if (!(backup = load_file(bpath, &bsize)))
+            goto done;
+        if ((r = slogic_dfu_check_backup(dfu, backup, bsize, msg, sizeof(msg)))) {
+            fprintf(stderr, "Backup refused: %s\n", msg);
+            r = 1;
+            goto done;
+        }
+        if (restore) {
+            /* Stock application: the backup's application region (trailing erased bytes dropped). */
+            size = SLOGIC_FLASH_APP_SIZE;
+            while (size && backup[size - 1] == 0xff)
+                size--;
+            if (!size) {
+                fprintf(stderr, "No application in the backup.\n");
+                r = 1;
+                goto done;
+            }
+            image = backup;
+            printf("Restoring the application from %s (%zu bytes)...\n", bpath, size);
+        } else {
+            if (!(image = load_file(argv[1], &size)) || !image_ok(image, size)) {
+                r = 1;
+                goto done;
+            }
+            printf("Installing %s (%zu bytes at 0x%06x)...\n", argv[1], size, SLOGIC_FLASH_APP_BASE);
+        }
         r = slogic_dfu_update(dfu, image, size, progress, NULL);
-        printf("%s\n", r ? slogic_strerror(r) : "Done: replug the analyzer.");
-        free(image);
+        printf("%s\n", r ? slogic_strerror(r) : "Done (verified): replug the analyzer.");
+done:
+        if (image != backup)
+            free(image);
+        free(backup);
+    } else {
+        fprintf(stderr, "dfu: unknown command %s\n", argv[0]);
     }
+    printf("(%.0fs)\n", slogic_time() - t0);
     slogic_dfu_close(dfu);
     return r ? 1 : 0;
 }
@@ -352,7 +449,10 @@ static void help(void)
            "  flash probe          Flash pads mapping probe, JEDEC ID.\n"
            "  flash read <f> <a> <n>  Read Flash to a file.\n"
            "  flash update <img>   Update the application (0x000000, the DFU loader is never written).\n"
-           "  dfu id|dump <f>|update <img>  Sipeed DFU loader (MODE button): stock/recovery.\n");
+           "  dfu id               Sipeed DFU loader (MODE button: LED blinking red): Flash ID.\n"
+           "  dfu dump <backup>    Full 16MB backup of this unit (read twice): the way back to stock.\n"
+           "  dfu update <img> --backup <backup>  Install a gateware image (backup checked first).\n"
+           "  dfu restore <backup> Stock firmware back from the backup (the DFU loader is never written).\n");
 }
 
 int main(int argc, char **argv)
