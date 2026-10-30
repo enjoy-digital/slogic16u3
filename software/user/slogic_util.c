@@ -160,24 +160,30 @@ static int cmd_check(uint64_t samples)
     for (unsigned ch = 4; ch <= 16; ch *= 2) {
         int n = slogic_samplerates(&info, ch, rates, 64);
         for (int i = 0; i < n; i++) {
-            struct slogic_config c = { .channels = ch, .samplerate = rates[i], .limit = samples,
+            /* Captures up to ~0.1s (low rates: at least 1000 samples), read timeout from the capture
+               duration (a Bulk IN transfer completes when full or on the final short packet). */
+            uint64_t n = samples;
+            if (n > rates[i]/10)
+                n = rates[i]/10 > 1000 ? rates[i]/10 : 1000;
+            int timeout_ms = 2000 + (int)(2000*n/rates[i]);
+            struct slogic_config c = { .channels = ch, .samplerate = rates[i], .limit = n,
                                        .pattern = SLOGIC_PATTERN_COUNTER };
             uint64_t divider = info.base_rate/rates[i], bad = 0, got = 0;
             unsigned unit = slogic_unitsize(ch);
-            uint8_t *s = malloc(slogic_packed_bytes(ch, samples) + 16), *u = malloc(samples*unit);
+            uint8_t *s = malloc(slogic_packed_bytes(ch, n) + 16), *u = malloc(n*unit);
             const uint8_t *data;
             size_t size, total = 0;
             int r;
 
             if ((r = slogic_capture_start(dev, &c)) == SLOGIC_OK) {
-                while ((r = slogic_capture_read(dev, &data, &size, 2000)) == SLOGIC_OK) {
+                while ((r = slogic_capture_read(dev, &data, &size, timeout_ms)) == SLOGIC_OK) {
                     memcpy(s + total, data, size);
                     total += size;
                 }
             }
             got = total*8/ch;
-            if (got > samples)
-                got = samples;
+            if (got > n)
+                got = n;
             slogic_unpack(ch, s, 0, got, u);
             for (uint64_t k = 0; k < got; k++) {
                 uint32_t v = unit == 2 ? (uint32_t)(u[2*k] | u[2*k + 1] << 8) : u[k];
@@ -185,7 +191,7 @@ static int cmd_check(uint64_t samples)
             }
             struct slogic_status st;
             slogic_capture_stop(dev, &st);
-            int ok = (r == SLOGIC_ERR_END) && got == samples && !bad && !st.overflow;
+            int ok = (r == SLOGIC_ERR_END) && got == n && !bad && !st.overflow;
             printf("%2u ch ", ch);
             print_rate("@ ", rates[i]);
             printf(": %s (%llu samples, %llu errors%s)\n", ok ? "OK" : "FAIL", (unsigned long long)got,

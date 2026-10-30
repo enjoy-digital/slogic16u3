@@ -103,8 +103,8 @@ class SLogicBaseSoC(SoCMini):
 
 class SLogicSoC(SLogicBaseSoC):
     def __init__(self, platform, sys_clk_freq=62.5e6, sample_clk_freq=100e6, sample_clk_source="serdes",
-        usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=512, usb3_pll="QPLL1",
-        with_analyzer=True, with_flash=True):
+        usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=512, usb3_pll="QPLL0",
+        with_analyzer=True, with_flash=True, with_jtagbone=False, with_usb3_debug=False):
         usb3_clk_freq = 125e6
 
         # SoCMini ----------------------------------------------------------------------------------
@@ -123,6 +123,11 @@ class SLogicSoC(SLogicBaseSoC):
             self.cd_gtr12.clk.eq(self.crg.cd_sys.clk),
             self.cd_gtr12.rst.eq(self.crg.cd_sys.rst),
         ]
+        # GTR12 configuration, with Gowin's USB 3.0 PHY IP settings (Gowin 1.9.12, this board).
+        from usb3_pipe.gw5 import gw5_usb3_csr_config
+        csr_config = gw5_usb3_csr_overrides(
+            gw5_usb3_csr_config(0, "5G", "125M", position="Q0", pll=usb3_pll),
+            GW5AT15_USB3_CSR_OVERRIDES if usb3_pll == "QPLL0" else {})
         usb3_serdes = GW5USB3SerDes(platform,
             sys_clk        = self.crg.cd_sys.clk,
             sys_clk_freq   = usb3_clk_freq,
@@ -133,7 +138,8 @@ class SLogicSoC(SLogicBaseSoC):
             xcvr_cd        = "gtr12",
             tx_cdc         = False,               # SerDes logic on the GTR12 TX clock.
             refclk         = "125M",
-            pll            = usb3_pll,            # QPLL1 or QPLL0 (as Gowin's USB 3.0 PHY IP).
+            pll            = usb3_pll,            # QPLL0 (as Gowin's USB 3.0 PHY IP) or QPLL1.
+            csr_config     = csr_config,
         )
         self.usb3_serdes = usb3_serdes = ClockDomainsRenamer({"sys": "tx"})(usb3_serdes)
         if with_analyzer:
@@ -154,6 +160,19 @@ class SLogicSoC(SLogicBaseSoC):
             with_u1u2     = False)
         self.add_usb3_phy_status(usb3_phy)
 
+        # USB3 Bring-up Debug (GTR12 status/UPAR, transitions, snapshots, LTSSM history: JTAGBone) ---
+        if with_usb3_debug:
+            from gateware.usb3_debug import USB3Debug
+            gtr12 = usb3_serdes.gtr12
+            gtr12.add_status_csr()
+            gtr12.upar.add_csr()
+            self.usb3_debug = usb3_debug = USB3Debug(gtr12, usb3_serdes, usb3_phy, cd="tx",
+                sys_clk_freq = sys_clk_freq)
+
+        # JTAGBone (CSRs over the JTAG port, ex: USB3 bring-up) ------------------------------------
+        if with_jtagbone:
+            self.add_jtagbone()
+
         # Sampler / SLogic (USB3 Device, Analyzer, Flash) ------------------------------------------
         samples = Signal(8*16)
         if with_analyzer:
@@ -171,6 +190,11 @@ class SLogicSoC(SLogicBaseSoC):
             fifo_depth = fifo_depth,
             with_analyzer = with_analyzer,
             with_flash    = with_flash)
+
+        # USB3 Device Core bring-up debug: Link Layer statistics, Data Packets rings.
+        if with_usb3_debug:
+            self.usb3.core.add_csr()
+            usb3_debug.add_dpp_rings(self.usb3.core)
 
         # Led (on: U0, blinking: capture running) --------------------------------------------------
         blink = Signal(24)
@@ -192,15 +216,45 @@ class SLogicSoC(SLogicBaseSoC):
             phy.status.fields.ready.eq(phy.ready),
         ]
 
+# GTR12 Configuration ------------------------------------------------------------------------------
+
+# Registers set as in Gowin's USB 3.0 PHY IP configuration for the GW5AT-15 (Gowin 1.9.12, QPLL0) where
+# serdes_toml_to_csr differs ({address: value, None: write removed}):
+# - CDR (0x80025c, 0x800259/0x80025d not written): RX 8b/10b errors prevent the link training with
+#   the serdes_toml_to_csr settings (Polling.Idle timeouts, hardware).
+# - QPLL0/TX lane clock tree (0x80810c, 0x808120, 0x8082a0).
+GW5AT15_USB3_CSR_OVERRIDES = {
+    0x80025c : 0x00000071,
+    0x800259 : None,
+    0x80025d : None,
+    0x80810c : 0x10280108,
+    0x808120 : 0x0000001a,
+    0x8082a0 : 0x00003150,
+}
+
+def gw5_usb3_csr_overrides(csr_config, overrides):
+    for addr, value in overrides.items():
+        pattern = rf"upar_write_driver\({addr:#08x},0x[0-9A-Fa-f]+\)[^\n]*\n"
+        assert len(re.findall(pattern, csr_config)) == 1, f"{addr:#08x}"
+        new = "" if value is None else f"upar_write_driver({addr:#08x},{value:#010x}) # Gowin USB 3.0 PHY IP.\n"
+        csr_config = re.sub(pattern, new, csr_config)
+    return csr_config
+
 # Gowin Workaround ---------------------------------------------------------------------------------
 
-def gowin_distributed_memories(platform, max_depth=64):
+def gowin_distributed_memories(platform, max_depth=64, exclude=None, include=None):
     """Memories mapped to distributed RAMs (syn_ramstyle attribute added to the generated Verilog
     before the Gowin project is created):
     - Initialized memories (identifier, USB3 descriptors: small, BSRAMs kept for the buffers; Gowin
       1.9.10 also rejects initialized BSRAMs on the GW5AT-15A: PA2128).
     - Shallow memories (depth <= max_depth: FIFOs, CDCs): the 35 BSRAMs (half used per inferred
-      SDPB/SDPX9B) are kept for the deep buffers (USB3 packets slots, capture FIFO)."""
+      SDPB/SDPX9B) are kept for the deep buffers (USB3 packets slots, capture FIFO).
+    exclude/include: regular expressions on the memory write port signals (Gowin mapping kept/
+    distributed RAM forced, debug).
+
+    Memories with an asynchronous read port (read address not registered by the memory) left to the
+    Gowin mapping are rejected: Gowin implements them in BSRAMs without error but with a different
+    behavior (hardware: USB3 DPP RX adapter FIFO data read back as zeros)."""
     toolchain     = platform.toolchain
     build_project = toolchain.build_project
     attr          = ' /* synthesis syn_ramstyle = "distributed_ram" */'
@@ -209,9 +263,21 @@ def gowin_distributed_memories(platform, max_depth=64):
         v      = open(v_file).read()
         v      = re.sub(r"(reg \[\d+:0\] (\w+)\[0:\d+\]);(\s*initial begin\s*\$readmemh\(\"[^\"]+\", \2\);)",
             r"\1" + attr + r";\3", v)
+        def matches(name, regex):
+            w = re.search(rf"\b{name}\[(\w+)\] <= ", v)
+            return (regex is not None) and (w is not None) and (re.search(regex, w.group(1)) is not None)
         def shallow(m):
-            return m.group(0) if (int(m.group(2)) + 1 > max_depth) or ("syn_ramstyle" in m.group(0)) else m.group(1) + attr + ";"
-        v      = re.sub(r"(reg \[\d+:0\] \w+\[0:(\d+)\])[^;\n]*;", shallow, v)
+            if ("syn_ramstyle" in m.group(0)) or matches(m.group(2), exclude):
+                return m.group(0)
+            if (int(m.group(3)) + 1 > max_depth) and not matches(m.group(2), include):
+                return m.group(0)
+            return m.group(1) + attr + ";"
+        v      = re.sub(r"(reg \[\d+:0\] (\w+)\[0:(\d+)\])[^;\n]*;", shallow, v)
+        for m in re.finditer(r"reg \[\d+:0\] (\w+)\[0:\d+\]([^;\n]*);", v):
+            name = m.group(1)
+            for adr in re.findall(rf"assign \w+ = {name}\[(\w+)\];", v):
+                if not re.fullmatch(rf"{name}_adr\d+", adr) and ("distributed_ram" not in m.group(2)):
+                    raise ValueError(f"Memory {name}: asynchronous read ({adr}) not on distributed RAM.")
         open(v_file, "w").write(v)
         build_project()
     toolchain.build_project = _build_project
@@ -231,7 +297,12 @@ def main():
     parser.add_argument("--usb-serial",        default="0001",          help="USB Serial Number.")
     parser.add_argument("--no-analyzer",       action="store_true",     help="Build without the Analyzer (USB3 bring-up).")
     parser.add_argument("--no-flash",          action="store_true",     help="Build without the Flash core.")
-    parser.add_argument("--usb3-pll",          default="QPLL1",         help="GTR12 lane PLL.", choices=["QPLL1", "QPLL0"])
+    parser.add_argument("--no-memory-hook",    action="store_true",     help="Memories mapping left to Gowin (no gowin_distributed_memories).")
+    parser.add_argument("--memory-hook-exclude", default=None,          help="Memories kept on the Gowin mapping (write port signals regex).")
+    parser.add_argument("--memory-hook-include", default=None,          help="Memories forced to distributed RAM (write port signals regex).")
+    parser.add_argument("--with-jtagbone",     action="store_true",     help="Enable JTAGBone (CSRs over JTAG).")
+    parser.add_argument("--with-usb3-debug",   action="store_true",     help="Enable USB3 bring-up debug CSRs.")
+    parser.add_argument("--usb3-pll",          default="QPLL0",         help="GTR12 lane PLL.", choices=["QPLL0", "QPLL1"])
     parser.add_argument("--device-version",    default="B",             help="GW5AT-15 device version (A: Gowin 1.9.10).", choices=["A", "B"])
     parser.add_argument("--place-option",      default=2, type=int,     help="Gowin place algorithm.", choices=[0, 1, 2, 3, 4])
     parser.add_argument("--route-option",      default=1, type=int,     help="Gowin route algorithm.", choices=[0, 1, 2])
@@ -242,7 +313,8 @@ def main():
     platform.toolchain.options["place_option"]        = args.place_option
     platform.toolchain.options["route_option"]        = args.route_option
     platform.toolchain.options["replicate_resources"] = args.replicate_resources
-    gowin_distributed_memories(platform)
+    if not args.no_memory_hook:
+        gowin_distributed_memories(platform, exclude=args.memory_hook_exclude, include=args.memory_hook_include)
 
     soc = SLogicSoC(platform,
         sys_clk_freq      = args.sys_clk_freq,
@@ -252,6 +324,8 @@ def main():
         usb_pid           = args.usb_pid,
         usb_serial        = args.usb_serial,
         usb3_pll          = args.usb3_pll,
+        with_jtagbone     = args.with_jtagbone,
+        with_usb3_debug   = args.with_usb3_debug,
         with_analyzer     = not args.no_analyzer,
         with_flash        = not args.no_flash,
     )

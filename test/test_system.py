@@ -99,6 +99,30 @@ class TestSystem(unittest.TestCase):
             self.assertEqual((yield from csr_read(soc, host, "analyzer_divider")), 25)
         self.run_system(scenario)
 
+    def test_enumeration(self):
+        # Linux enumeration sequence (short wLength requests: truncated responses), then a CSR read.
+        def get_descriptor(host, value, length, index=0):
+            return (yield from pyhost_control_in(host, setup_packet(0x80, 0x06, value, index, length)))
+        def scenario(soc, host):
+            dev = yield from get_descriptor(host, 0x0100, 18)
+            self.assertEqual(len(dev), 18)
+            self.assertEqual(dev[1], 0x01)
+            bos = yield from get_descriptor(host, 0x0f00, 5)
+            self.assertEqual(len(bos), 5)
+            self.assertEqual(bos[1], 0x0f)
+            bos = yield from get_descriptor(host, 0x0f00, bos[2] | (bos[3] << 8))
+            self.assertEqual(bos[1], 0x0f)
+            cfg = yield from get_descriptor(host, 0x0200, 9)
+            self.assertEqual(len(cfg), 9)
+            cfg = yield from get_descriptor(host, 0x0200, cfg[2] | (cfg[3] << 8))
+            self.assertEqual(cfg[1], 0x02)
+            for index, length in [(0, 255), (0, 4), (2, 255), (2, 2), (1, 255), (3, 255)]:
+                string = yield from get_descriptor(host, 0x0300 | index, length, 0x0409 if index else 0)
+                self.assertEqual(string[1], 0x03)
+                self.assertEqual(len(string), min(length, string[0]) if length > 2 else length)
+            self.assertEqual((yield from csr_read(soc, host, "analyzer_magic")), ANALYZER_MAGIC)
+        self.run_system(scenario)
+
     def test_pattern_capture(self):
         # 16 channels, divider 4 (200MS/s), counter pattern, 1000 samples (2000 bytes: 2 packets).
         limit, divider, mode = 1000, 4, 2

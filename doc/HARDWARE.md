@@ -14,8 +14,8 @@ protocol and flash layout), Sipeed's libsigrok driver ([sipeed/libsigrok](https:
   driver registers identical to Gowin's USB 3.0 PHY IP configuration for this board. The 1.9.10 generic tool
   missed these registers (`rext_enable`, `pma_bias_enable`, `txdrv_poweron`) and wrote Q1 registers (absent
   on the GW5AT-15). 1.9.10 (`--device-version A`) still builds but rejects initialized BSRAMs (PA2128).
-- GTR12 lane PLL: QPLL1 (default, as on the GW5AST-138B) or QPLL0 (`--usb3-pll QPLL0`, as Gowin's USB 3.0 PHY
-  IP on this board): bring-up fallback if QPLL1 does not lock.
+- GTR12 lane PLL: QPLL0 (default, as Gowin's USB 3.0 PHY IP on this board); QPLL1 (`--usb3-pll QPLL1`, as on
+  the GW5AST-138B): no link on this board (hardware).
 
 ## Clocks
 
@@ -31,6 +31,9 @@ No fabric clock input: accurate fabric clocks have to come from the GTR12 (TX fa
 
 - GTR12 Q0 lane 0: RX A2/A1, TX B3/C3 (dedicated), through a VL162 Type-C mux (orientation handled by
   the mux). 5Gbps only, no USB2 PHY (USB 2.0 hosts/cables: no enumeration).
+- GTR12 settings on this board (hardware): QPLL0, CDR from Gowin's USB 3.0 PHY IP configuration (see
+  `GW5AT15_USB3_CSR_OVERRIDES` in `slogic_16u3.py`). JTAG (Acorn baseboard FT2232, channel A):
+  `openFPGALoader -c ft2232`, JTAGBone with `software/debug/openocd_slogic16u3.cfg`.
 - C14: USB2 D+ pull-up control, kept at 0. H3/H2 and M2/M1: D+/D- comparators (TLVDS inputs), K3/K2,
   P2/P1: USB2 dx/termination balls (inputs, not driven).
 

@@ -22,11 +22,9 @@ to PulseView:
 - **Tested before the hardware**: Migen unit tests, USB3 host model ↔ Device Core ↔ SoC system simulation, C unit
   tests and sigrok/ngscopeclient end-to-end tests on the simulated device.
 
-> **Status: work in progress.** The gateware builds for the GW5AT-15 (Gowin IDE 1.9.12, timings met: 88% of the logic)
-> and is validated in simulation,
-> the host stack is validated on the simulated device. **Hardware bring-up is the next step** (USB3 link, inputs,
-> rates, Flash pads): see [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU
-> loader.
+> **Status: hardware bring-up in progress.** USB3 enumerates at 5Gbps on the SLogic16U3, the self-test captures
+> pass on hardware up to 200MB/s (all channel modes); 320/400MB/s, inputs, Flash pads and updates are next: see
+> [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU loader.
 
 | | |
 |:---:|:---:|

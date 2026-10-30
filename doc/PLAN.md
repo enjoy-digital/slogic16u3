@@ -46,7 +46,7 @@ Host stack (layered, C first):
 | 6  | sigrok / PulseView       | litex-slogic libsigrok driver, build script (libsigrok/libsigrokdecode/sigrok-cli/PulseView), tests.  | Done (sim)        |
 | 7  | ngscopeclient            | slogic_scopehal_bridge (TwinLan) + scopehal driver "slogic" (syntax checked), bridge tests.           | Done (sim)        |
 | 8  | Remote update            | Flash pads probe, update with verify (app region only), DFU loader client, recovery docs.             | Done (sim)        |
-| 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | Next              |
+| 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | In progress       |
 | 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
 
 ## Timing Closure (GW5AT-15B, Gowin 1.9.12.04)
@@ -66,10 +66,19 @@ pipelining (sample clock), MaxBurst 4.
 
 ## Hardware Bring-up Steps
 
-1. `--no-analyzer --no-flash` bitstream over JTAG (`./slogic_16u3.py --build --load`): USB3 enumeration (`lsusb -t`:
-   5000M, `SLogic16U3 LiteX`), `slogic_util info` (LTSSM U0), `litex_server --usb` CSR accesses.
-   No link: retry with `--usb3-pll QPLL0` (the PLL of Gowin's USB 3.0 PHY IP on this board).
-2. Full bitstream: `slogic_util check` (counter pattern, all modes/rates), `slogic_util bench` (throughput).
+1. **Done**: USB3 enumeration (5000M, `SLogic16U3 LiteX`, descriptors/strings), EP0 CSR accesses (1000/1000
+   write/read), `slogic_util info` (U0). Findings:
+   - QPLL1: no link (host sees no device); QPLL0 (Gowin's USB 3.0 PHY IP choice): default.
+   - CDR/QPLL0 settings from Gowin's USB 3.0 PHY IP configuration (`GW5AT15_USB3_CSR_OVERRIDES`): with the
+     serdes_toml_to_csr CDR value, RX 8b/10b errors prevent the training (Polling.Idle timeouts).
+   - USB3-PIPE DPP RX adapter FIFO (asynchronous RAM read) mis-implemented by Gowin in block RAMs (EP0 Setups
+     read back as zeros): FIFO buffered in USB3-PIPE, build check in `gowin_distributed_memories`.
+   - Bring-up debug: `--with-jtagbone --with-usb3-debug` (LTSSM history, GTR12 status/UPAR, link statistics,
+     Data Packets rings) over the JTAG port, `software/debug/usb3_debug.py`.
+2. **Done** (full bitstream over JTAG): `slogic_util check` 96/99 (counter pattern, all modes, 1kHz to 200MB/s,
+   no errors), `slogic_util bench` 16ch@100MHz: 200MB/s sustained. **Open**: 400MB/s (4ch@800MHz, 8ch@400MHz,
+   16ch@200MHz) and 320MB/s (16ch@160MHz) overflow at the start (4KB capture FIFO vs host gaps): buffering /
+   link efficiency.
 3. Inputs: IDES8 bit order (Q0 first, from the Gowin model), CH0-CH15 mapping, LVCMOS15UD33 threshold, 800MS/s
    on 4 channels.
 4. `slogic_util clock`: sample clock accuracy (GTR12 TX clock source).
@@ -96,7 +105,9 @@ pipelining (sample clock), MaxBurst 4.
 - Fabric reconfiguration from the gateware (reboot after update without replug): SAMB + ? (to investigate).
 - Sample clock source: GTR12 TX clock (125MHz oscillator, accurate) vs OSCA (internal, inaccurate).
 - IDES8 at 800Mb/s on the LVCMOS15UD33 inputs (stock: 800MS/s on 4 channels).
-- GTR12 lane PLL on the board: QPLL1 (default) or QPLL0 (`--usb3-pll QPLL0`, Gowin's USB 3.0 PHY IP choice).
+- 320/400MB/s captures: capture FIFO depth (BSRAMs left: ~9 x 18Kb), Bulk IN/Link Layer efficiency on the
+  GW5AT-15 (bench: overflow at the start).
+- Generate the CDR/QPLL0 settings from the TOML (serdes_toml_to_csr keys) instead of overrides.
 
 ## Ideas (beyond stock)
 
