@@ -7,10 +7,15 @@ protocol and flash layout), Sipeed's libsigrok driver ([sipeed/libsigrok](https:
 
 ## FPGA
 
-- Gowin **GW5AT-LV15MG132C1/I0** (GW5AT-15A, MBGA132): 15120 LUT4, 15279 registers, 630Kb BSRAM, one
+- Gowin **GW5AT-LV15MG132C1/I0** (GW5AT-15B, MBGA132): 15120 LUT4, 15279 registers, 630Kb BSRAM, one
   GTR12 SerDes quad (Q0, `GTR12_QUADB`/`GTR12_UPARA` primitives), PLLA, OSCA, IDES8/IDES16.
-- Gowin IDE: 1.9.10 builds the design (Q0 SerDes configuration from `serdes_toml_to_csr`); it rejects
-  initialized BSRAMs on this device (PA2128), slogic16u3-trace uses 1.9.12.04 (device version B).
+- Gowin IDE: **1.9.12.04** (device version B, as slogic16u3-trace), Q0 SerDes configuration generated with
+  its GW5AT-15 `serdes_toml_to_csr_15k` (1.9.12 TOML schema, see USB3-PIPE `gw5/gen_toml_q0.py`): top/bias/TX
+  driver registers identical to Gowin's USB 3.0 PHY IP configuration for this board. The 1.9.10 generic tool
+  missed these registers (`rext_enable`, `pma_bias_enable`, `txdrv_poweron`) and wrote Q1 registers (absent
+  on the GW5AT-15). 1.9.10 (`--device-version A`) still builds but rejects initialized BSRAMs (PA2128).
+- GTR12 lane PLL: QPLL1 (default, as on the GW5AST-138B) or QPLL0 (`--usb3-pll QPLL0`, as Gowin's USB 3.0 PHY
+  IP on this board): bring-up fallback if QPLL1 does not lock.
 
 ## Clocks
 

@@ -7,8 +7,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 """Build the gateware with several Gowin place algorithms in parallel (Gowin PnR has no seed, the design
-fills ~90% of the GW5AT-15: timings depend on the placement) and keep the first one meeting the timings
-(else the best one) in build/.
+fills ~90% of the GW5AT-15: timings depend on the placement) and keep the one with the best margins (worst
+fmax/constraint ratio) in build/.
 
     ./scripts/build_best.py [--options 0 1 2 3 4] [-- extra slogic_16u3.py arguments]
 """
@@ -48,6 +48,7 @@ def main():
     args  = parser.parse_args()
     extra = [a for a in args.extra if a != "--"]
 
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_dir)), exist_ok=True)
     procs = {}
     for opt in args.options:
         d = f"{args.output_dir}_place{opt}"

@@ -64,22 +64,22 @@ Fixed CSR map ([slogic_regs.h](../software/user/libslogic/slogic_regs.h), checke
 | identifier_mem | 0x2000 | SoC identifier (one character per word).                                        |
 | flash_buffer   | 0x20000000 | 512-byte TX (writes)/RX (reads) buffers.                                    |
 
-## Resources/Timings (Gowin 1.9.10, GW5AT-LV15MG132C1)
+## Resources/Timings (Gowin 1.9.12.04, GW5AT-LV15MG132C1, version B)
 
 The design fills most of the GW5AT-15: the USB3 PHY + Device Core alone use ~70% of the logic (64-bit Link
 Layer at 62.5MHz). BSRAMs are kept for the deep buffers (USB3 packets slots, capture FIFO), shallow and
-initialized memories go to distributed RAM (`gowin_distributed_memories`: Gowin 1.9.10 also rejects initialized
+initialized memories go to distributed RAM (`gowin_distributed_memories`, Gowin 1.9.10 also rejects initialized
 BSRAMs on the GW5AT-15A).
 
 | Build                          | Logic       | BSRAM | sys (62.5) | tx (125)  | sample (100) |
 |--------------------------------|-------------|-------|------------|-----------|--------------|
-| USB3 only (`--no-analyzer --no-flash`) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -          |
-| Full (place_option 2)          | 13443 (89%) | 80%   | 65.4MHz    | 133.6MHz  | 100.8MHz     |
+| USB3 only (`--no-analyzer --no-flash`, 1.9.10) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -  |
+| Full (place_option 2)          | 13301 (88%) | 26/35 | 71.9MHz    | 139.3MHz  | 106.3MHz     |
 
 ¹ USB3 packets slots optimized out without the Analyzer.
 
 Gowin PnR has no seed and the design is ~90% full: `scripts/build_best.py` builds several place algorithms in
-parallel and keeps one meeting the timings.
+parallel and keeps the one with the best margins (1.9.12: 4 of 5 meet the timings, 1.9.10: 1 of 5).
 
 ## Simulation
 

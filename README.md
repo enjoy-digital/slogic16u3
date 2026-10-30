@@ -22,7 +22,7 @@ to PulseView:
 - **Tested before the hardware**: Migen unit tests, USB3 host model ↔ Device Core ↔ SoC system simulation, C unit
   tests and sigrok/ngscopeclient end-to-end tests on the simulated device.
 
-> **Status: work in progress.** The gateware builds for the GW5AT-15 (Gowin IDE, timings met: 89% of the logic)
+> **Status: work in progress.** The gateware builds for the GW5AT-15 (Gowin IDE 1.9.12, timings met: 88% of the logic)
 > and is validated in simulation,
 > the host stack is validated on the simulated device. **Hardware bring-up is the next step** (USB3 link, inputs,
 > rates, Flash pads): see [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU
@@ -83,8 +83,7 @@ Add `-d sim` (tools) or `conn=sim` (sigrok) to run on the simulated device. Deta
 
 ### Requirements
 
-- Gowin IDE (`gw_sh` in the `PATH`, GW5AT-15 support): 1.9.10 builds the design, 1.9.12 recommended (GW5AT-15
-  device version B).
+- Gowin IDE (`gw_sh` in the `PATH`): 1.9.12.04 (GW5AT-15 device version B); 1.9.10 with `--device-version A`.
 - LiteX, Migen, LiteX-Boards, LiteICLink, USB3-PIPE (`litex_setup.py --init --install`), the not yet merged
   branches: `source scripts/env.sh` (LiteX-Boards `sipeed_slogic16u3`, LiteICLink `serdes/gtr12-gw5at`,
   USB3-PIPE `gw5/gw5at-15`).

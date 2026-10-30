@@ -103,7 +103,7 @@ class SLogicBaseSoC(SoCMini):
 
 class SLogicSoC(SLogicBaseSoC):
     def __init__(self, platform, sys_clk_freq=62.5e6, sample_clk_freq=100e6, sample_clk_source="serdes",
-        usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=512,
+        usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=512, usb3_pll="QPLL1",
         with_analyzer=True, with_flash=True):
         usb3_clk_freq = 125e6
 
@@ -133,6 +133,7 @@ class SLogicSoC(SLogicBaseSoC):
             xcvr_cd        = "gtr12",
             tx_cdc         = False,               # SerDes logic on the GTR12 TX clock.
             refclk         = "125M",
+            pll            = usb3_pll,            # QPLL1 or QPLL0 (as Gowin's USB 3.0 PHY IP).
         )
         self.usb3_serdes = usb3_serdes = ClockDomainsRenamer({"sys": "tx"})(usb3_serdes)
         if with_analyzer:
@@ -196,8 +197,8 @@ class SLogicSoC(SLogicBaseSoC):
 def gowin_distributed_memories(platform, max_depth=64):
     """Memories mapped to distributed RAMs (syn_ramstyle attribute added to the generated Verilog
     before the Gowin project is created):
-    - Initialized memories (identifier, USB3 descriptors: small): Gowin 1.9.10 rejects initialized
-      BSRAMs on the GW5AT-15A (PA2128).
+    - Initialized memories (identifier, USB3 descriptors: small, BSRAMs kept for the buffers; Gowin
+      1.9.10 also rejects initialized BSRAMs on the GW5AT-15A: PA2128).
     - Shallow memories (depth <= max_depth: FIFOs, CDCs): the 35 BSRAMs (half used per inferred
       SDPB/SDPX9B) are kept for the deep buffers (USB3 packets slots, capture FIFO)."""
     toolchain     = platform.toolchain
@@ -230,12 +231,14 @@ def main():
     parser.add_argument("--usb-serial",        default="0001",          help="USB Serial Number.")
     parser.add_argument("--no-analyzer",       action="store_true",     help="Build without the Analyzer (USB3 bring-up).")
     parser.add_argument("--no-flash",          action="store_true",     help="Build without the Flash core.")
+    parser.add_argument("--usb3-pll",          default="QPLL1",         help="GTR12 lane PLL.", choices=["QPLL1", "QPLL0"])
+    parser.add_argument("--device-version",    default="B",             help="GW5AT-15 device version (A: Gowin 1.9.10).", choices=["A", "B"])
     parser.add_argument("--place-option",      default=2, type=int,     help="Gowin place algorithm.", choices=[0, 1, 2, 3, 4])
     parser.add_argument("--route-option",      default=1, type=int,     help="Gowin route algorithm.", choices=[0, 1, 2])
     parser.add_argument("--replicate-resources", default=0, type=int,   help="Gowin resources replication (timings vs logic).", choices=[0, 1])
     args = parser.parse_args()
 
-    platform = sipeed_slogic16u3.Platform(toolchain="gowin")
+    platform = sipeed_slogic16u3.Platform(device_version=args.device_version, toolchain="gowin")
     platform.toolchain.options["place_option"]        = args.place_option
     platform.toolchain.options["route_option"]        = args.route_option
     platform.toolchain.options["replicate_resources"] = args.replicate_resources
@@ -248,6 +251,7 @@ def main():
         usb_vid           = args.usb_vid,
         usb_pid           = args.usb_pid,
         usb_serial        = args.usb_serial,
+        usb3_pll          = args.usb3_pll,
         with_analyzer     = not args.no_analyzer,
         with_flash        = not args.no_flash,
     )

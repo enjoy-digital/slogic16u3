@@ -49,24 +49,26 @@ Host stack (layered, C first):
 | 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | Next              |
 | 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
 
-## Timing Closure (GW5AT-15, Gowin 1.9.10)
+## Timing Closure (GW5AT-15B, Gowin 1.9.12.04)
 
-| Clock         | Target   | USB3 only | Full design (place_option 2) |
-|---------------|----------|-----------|------------------------------|
-| sys           | 62.5MHz  | 83.4MHz   | 65.4MHz                      |
-| tx (PIPE)     | 125MHz   | 126.9MHz  | 133.6MHz                     |
-| rx            | 125MHz   | 188.4MHz  | 175.7MHz                     |
-| sample        | 100MHz   | -         | 100.8MHz                     |
+| Clock         | Target   | Full design (place_option 2) | place_option 1/3/4  | 1.9.10 (GW5AT-15A, place_option 2) |
+|---------------|----------|------------------------------|---------------------|------------------------------------|
+| sys           | 62.5MHz  | 71.9MHz                      | 67.1/93.9/69.4MHz   | 65.4MHz                            |
+| tx (PIPE)     | 125MHz   | 139.3MHz                     | 129.1/133.0/137.0MHz| 133.6MHz                           |
+| rx            | 125MHz   | 188.1MHz                     | 178.1/200.6/165.4MHz| 175.7MHz                           |
+| sample        | 100MHz   | 106.3MHz                     | 101.6/105.0/100.2MHz| 100.8MHz                           |
 
-Full design: 13.4K/15.1K logic (89%), 95% CLS, 80% BSRAM, 2/2 PLLs: timings met with place_option 2 (0/1: tx and
-sample clocks a few % short, 3/4: unrouted). Gowin PnR has no seed: `scripts/build_best.py` builds the place
-algorithms in parallel and keeps the first meeting the timings (as slogic16u3-trace). Margins are thin: next
-steps for robustness: limit stage pipelining (sample clock), Gowin >= 1.9.12, MaxBurst 4.
+Full design: 13.3K/15.1K logic (88%), 95% CLS, 26/35 BSRAM, 2/2 PLLs. Gowin 1.9.12: timings met with 4 of the 5
+place algorithms (0: unrouted), place_option 2 with the best margins (default); 1.9.10 only met them with
+place_option 2. Gowin PnR has no seed: `scripts/build_best.py` builds the place algorithms in parallel and keeps
+the one with the best margins (as slogic16u3-trace). Next steps for robustness if needed: limit stage
+pipelining (sample clock), MaxBurst 4.
 
 ## Hardware Bring-up Steps
 
 1. `--no-analyzer --no-flash` bitstream over JTAG (`./slogic_16u3.py --build --load`): USB3 enumeration (`lsusb -t`:
    5000M, `SLogic16U3 LiteX`), `slogic_util info` (LTSSM U0), `litex_server --usb` CSR accesses.
+   No link: retry with `--usb3-pll QPLL0` (the PLL of Gowin's USB 3.0 PHY IP on this board).
 2. Full bitstream: `slogic_util check` (counter pattern, all modes/rates), `slogic_util bench` (throughput).
 3. Inputs: IDES8 bit order (Q0 first, from the Gowin model), CH0-CH15 mapping, LVCMOS15UD33 threshold, 800MS/s
    on 4 channels.
@@ -94,7 +96,7 @@ steps for robustness: limit stage pipelining (sample clock), Gowin >= 1.9.12, Ma
 - Fabric reconfiguration from the gateware (reboot after update without replug): SAMB + ? (to investigate).
 - Sample clock source: GTR12 TX clock (125MHz oscillator, accurate) vs OSCA (internal, inaccurate).
 - IDES8 at 800Mb/s on the LVCMOS15UD33 inputs (stock: 800MS/s on 4 channels).
-- Gowin >= 1.9.12 (GW5AT-15 version B, initialized BSRAMs): 1.9.10 rejects initialized BSRAMs.
+- GTR12 lane PLL on the board: QPLL1 (default) or QPLL0 (`--usb3-pll QPLL0`, Gowin's USB 3.0 PHY IP choice).
 
 ## Ideas (beyond stock)
 
