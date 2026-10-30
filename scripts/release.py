@@ -101,7 +101,7 @@ def main():
     # Build information.
     deps = [("slogic_16u3", ROOT)]
     for p in os.environ.get("PYTHONPATH", "").split(":") + [os.path.join(os.environ.get("LITEX_DIR",
-        os.path.expanduser("~/dev/litex")), r) for r in ["litex", "migen"]]:
+        os.path.expanduser("~/dev/litex")), r) for r in ["litex", "migen", "litex-boards", "liteiclink", "usb3_pipe"]]:
         if p and os.path.isdir(p) and git(p, "rev-parse", "HEAD"):
             top = git(p, "rev-parse", "--show-toplevel") or p
             deps.append((os.path.basename(top.split("/.claude/")[0]), p))
