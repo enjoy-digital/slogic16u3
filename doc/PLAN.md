@@ -76,8 +76,8 @@ pipelining (sample clock), MaxBurst 4.
      toolchain).
    - Bring-up debug: `--with-jtagbone --with-usb3-debug` (LTSSM history, GTR12 status/UPAR, link statistics,
      Data Packets rings) over the JTAG port, `software/debug/usb3_debug.py`.
-2. **Done** (full bitstream over JTAG): `slogic_util check` 99/99 (counter pattern, all modes, 1kHz to 400MB/s,
-   no errors), `slogic_util bench` 400MB/s sustained (30s) at 4ch@800MHz, 8ch@400MHz and 16ch@200MHz. Findings:
+2. **Done** (full bitstream over JTAG): `slogic_util check` 198/198 (counter pattern and pattern generator, all
+   modes, 1kHz to 400MB/s, every sample checked; generator UART/SPI decoded by sigrok-cli on the device), `slogic_util bench` 400MB/s sustained (30s) at 4ch@800MHz, 8ch@400MHz and 16ch@200MHz. Findings:
    - 32-bit capture CDC to sys (250MB/s at 62.5MHz): 64-bit words converted in the sample clock domain.
    - Bulk IN at ~370MB/s with a Max Burst of 8 (`--with-jtagbone --with-usb3-counters`: device waiting for a host
      request ~50% of the time, ACK TPs NumP counted down from Max Burst by the AMD xHCI): Max Burst 16, capture
