@@ -16,6 +16,7 @@ from litex.gen import *
 from litex.soc.interconnect.csr import *
 
 from usb3_pipe.common import COM, K
+from usb3_core.common import TYPE_TP, TP_SUB_ACK
 
 # USB3 Debug ---------------------------------------------------------------------------------------
 
@@ -28,12 +29,14 @@ class USB3Debug(LiteXModule):
     snapshot/ring (~3K LUTs, link in U0: do not fit with the USB3 Device Core on the GW5AT-15).
     with_lane_counters: GTR12 lane status transitions and PIPE counters (link training),
     with_rx_snapshots: GTR12 raw RX words from a K28.5 (rx clock domain: cleared on RX resets). core: USB3
-    Device Core, Data Packets rings (Link Layer RX DPP, EP0 RX).
+    Device Core, Data Packets rings (Link Layer RX DPP, EP0 RX). add_bulk_in_counters: Bulk IN
+    throughput counters (alone: USB3Debug(with_ltssm_history=False)).
     """
-    def __init__(self, gtr12, serdes, phy, cd, sys_clk_freq, core=None,
+    def __init__(self, gtr12=None, serdes=None, phy=None, cd=None, sys_clk_freq=None, core=None,
         with_lane_counters = False,
         with_rx_snapshots  = False,
-        with_tx_snapshots  = False):
+        with_tx_snapshots  = False,
+        with_ltssm_history = True):
         self.cd = cd
 
         # # #
@@ -43,7 +46,8 @@ class USB3Debug(LiteXModule):
             self.add_pipe_counters(phy.pipe, serdes)
         if with_rx_snapshots or with_tx_snapshots:
             self.add_rx_snapshots(gtr12, serdes, phy.pipe if with_tx_snapshots else None)
-        self.add_ltssm_history(phy, sys_clk_freq, n=16)
+        if with_ltssm_history:
+            self.add_ltssm_history(phy, sys_clk_freq, n=16)
         if core is not None:
             self.add_dpp_rings(core)
 
@@ -70,6 +74,58 @@ class USB3Debug(LiteXModule):
         # 16x (data[32], first, last, setup) (64-bit entries).
         self.add_ring("ep0_rx", Cat(ep0.data, ep0.first, ep0.last, core.ep0.rx_dpp_setup),
             ep0.valid & ep0.ready)
+
+    def add_bulk_in_counters(self, core, bulk_in, enable):
+        """Bulk IN throughput counters (sys cycles while enable, ex: capture running, cleared on
+        its rising edge): DPs sent, ACK TPs, endpoint sending state (no data, waiting for a host
+        request, flow control, Link Layer not ready, all the slots in flight), Link Layer TX (Header
+        Packet waiting for a credit, PHY not ready, idle), ACK TPs NumP histogram."""
+        link = core.link
+        tx   = link.tx_pipe.source
+        nump = bulk_in.hdr_dw1[16:21]
+        ack  = Signal()
+        self.comb += ack.eq(bulk_in.hdr_strobe &
+            (bulk_in.hdr_dw0[0:5] == TYPE_TP) &
+            (bulk_in.hdr_dw1[0:4] == TP_SUB_ACK))
+
+        # Events counters (32-bit).
+        events = [
+            ("cycles",   1),
+            ("dps",      bulk_in.tx_hp.valid & bulk_in.tx_hp.ready & bulk_in.tx_hp.dpp),
+            ("acks",     ack),
+            ("no_data",  bulk_in.dbg_no_data),
+            ("no_win",   bulk_in.dbg_no_win),
+            ("fc",       bulk_in.dbg_fc),
+            ("hp_wait",  bulk_in.dbg_hp_wait),
+            ("all_sent", bulk_in.dbg_inflight == bulk_in.max_burst),
+            ("credit",   link.dbg_tx_credit),
+            ("phy_wait", tx.valid & ~tx.ready),
+            ("tx_idle",  ~tx.valid),
+        ]
+        enable_d = Signal()
+        clear    = Signal()
+        self.sync += enable_d.eq(enable)
+        self.comb += clear.eq(enable & ~enable_d)
+        counters = []
+        for name, event in events:
+            counter = Signal(32, name=f"bulk_in_{name}")
+            self.sync += If(clear,
+                counter.eq(0)
+            ).Elif(enable & event,
+                counter.eq(counter + 1)
+            )
+            counters.append(counter)
+
+        # ACK TPs NumP histogram (0-15, 16: 16-bit counters).
+        for i in range(17):
+            counter = Signal(16, name=f"bulk_in_nump{i}")
+            self.sync += If(clear,
+                counter.eq(0)
+            ).Elif(enable & ack & ((nump == i) if i < 16 else (nump >= 16)),
+                counter.eq(counter + 1)
+            )
+            counters.append(counter)
+        self.add_indexed_status("bulk_in", Cat(*counters))
 
     def add_indexed_status(self, name, value):
         words = (len(value) + 31)//32

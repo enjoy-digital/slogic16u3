@@ -48,8 +48,10 @@ class Analyzer(LiteXModule):
         # # #
 
         # Capture ----------------------------------------------------------------------------------
-        # 32-bit capture words (CDC on 32-bit), converted to data_width in sys.
-        self.capture = capture = ClockDomainsRenamer(cd)(Capture(nchannels, ratio, data_width=32))
+        # data_width capture words (converted in the cd clock domain): the CDC to sys carries the
+        # full rate (32-bit words: 4 bytes per sys cycle, 250MB/s at 62.5MHz, too low for 400MB/s).
+        capture = Capture(nchannels, ratio, data_width=data_width)
+        self.capture = capture = ClockDomainsRenamer(cd)(capture)
         self.comb += capture.samples.eq(self.samples)
 
         # Control (sys -> cd).
@@ -103,17 +105,14 @@ class Analyzer(LiteXModule):
         if cd == "sys":
             cdc_source = capture.source
         else:
-            self.cdc = cdc = stream.ClockDomainCrossing([("data", 32)], cd_from=cd, cd_to="sys", depth=16)
+            self.cdc = cdc = stream.ClockDomainCrossing(layout, cd_from=cd, cd_to="sys", depth=16)
             self.comb += capture.source.connect(cdc.sink)
             cdc_source = cdc.source
-        # Converter/FIFO reset on start: stale data of an aborted capture dropped.
-        self.conv = conv = ResetInserter()(stream.Converter(32, data_width))
+        # FIFO reset on start: stale data of an aborted capture dropped.
         self.fifo = fifo = ResetInserter()(stream.SyncFIFO(layout, fifo_depth, buffered=True))
         self.comb += [
-            conv.reset.eq(self.start),
             fifo.reset.eq(self.start),
-            cdc_source.connect(conv.sink),
-            conv.source.connect(fifo.sink, omit={"valid_token_count"}),
+            cdc_source.connect(fifo.sink),
             fifo.source.connect(source),
         ]
 

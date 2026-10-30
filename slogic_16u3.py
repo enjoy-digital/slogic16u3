@@ -36,7 +36,7 @@ from gateware.crg      import CRG
 from gateware.sampler  import GW5ASampler
 from gateware.analyzer import Analyzer
 from gateware.flash    import Flash
-from gateware.usb3     import USB3Device, USB3_VID, USB3_PID
+from gateware.usb3     import USB3Device, USB3_VID, USB3_PID, USB3_MAX_BURST
 
 # IOs ----------------------------------------------------------------------------------------------
 
@@ -65,13 +65,14 @@ class SLogicBaseSoC(SoCMini):
 
     def add_slogic(self, usb3_phy, samples, sample_cd="sample", base_rate=800e6, mspi_pads=None,
         usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=1024,
-        with_analyzer=True, with_flash=True):
+        usb3_max_burst=USB3_MAX_BURST, with_analyzer=True, with_flash=True):
         # USB3 Device (EP0 Wishbone bridge, Bulk IN) -----------------------------------------------
         self.usb3 = usb3 = USB3Device(usb3_phy, self.sys_clk_freq,
             data_width = 64,
             vid        = usb_vid,
             pid        = usb_pid,
-            serial     = usb_serial)
+            serial     = usb_serial,
+            max_burst  = usb3_max_burst)
         self.bus.add_master(name="usb3", master=usb3.bus)
 
         # Analyzer ---------------------------------------------------------------------------------
@@ -103,8 +104,9 @@ class SLogicBaseSoC(SoCMini):
 
 class SLogicSoC(SLogicBaseSoC):
     def __init__(self, platform, sys_clk_freq=62.5e6, sample_clk_freq=100e6, sample_clk_source="serdes",
-        usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=512, usb3_pll="QPLL0",
-        with_analyzer=True, with_flash=True, with_jtagbone=False, with_usb3_debug=False):
+        usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=2048, usb3_pll="QPLL0",
+        usb3_max_burst=USB3_MAX_BURST, with_analyzer=True, with_flash=True, with_jtagbone=False,
+        with_usb3_debug=False, with_usb3_counters=False):
         usb3_clk_freq = 125e6
 
         # SoCMini ----------------------------------------------------------------------------------
@@ -187,14 +189,23 @@ class SLogicSoC(SLogicBaseSoC):
             usb_vid    = usb_vid,
             usb_pid    = usb_pid,
             usb_serial = usb_serial,
-            fifo_depth = fifo_depth,
-            with_analyzer = with_analyzer,
-            with_flash    = with_flash)
+            fifo_depth     = fifo_depth,
+            usb3_max_burst = usb3_max_burst,
+            with_analyzer  = with_analyzer,
+            with_flash     = with_flash)
 
         # USB3 Device Core bring-up debug: Link Layer statistics, Data Packets rings.
         if with_usb3_debug:
             self.usb3.core.add_csr()
             usb3_debug.add_dpp_rings(self.usb3.core)
+
+        # USB3 Bulk IN throughput counters (capture running: JTAGBone, without the bring-up debug).
+        if with_usb3_counters and with_analyzer:
+            from gateware.usb3_debug import USB3Debug
+            if not with_usb3_debug:
+                self.usb3_debug = USB3Debug(with_ltssm_history=False)
+            self.usb3_debug.add_bulk_in_counters(self.usb3.core, self.usb3.bulk_in,
+                enable = self.analyzer.running)
 
         # Led (on: U0, blinking: capture running) --------------------------------------------------
         blink = Signal(24)
@@ -295,6 +306,7 @@ def main():
     parser.add_argument("--usb-vid",           default=USB3_VID, type=lambda x: int(x, 0), help="USB Vendor ID.")
     parser.add_argument("--usb-pid",           default=USB3_PID, type=lambda x: int(x, 0), help="USB Product ID.")
     parser.add_argument("--usb-serial",        default="0001",          help="USB Serial Number.")
+    parser.add_argument("--fifo-depth",        default=2048, type=int,   help="Capture FIFO depth (64-bit words).")
     parser.add_argument("--no-analyzer",       action="store_true",     help="Build without the Analyzer (USB3 bring-up).")
     parser.add_argument("--no-flash",          action="store_true",     help="Build without the Flash core.")
     parser.add_argument("--no-memory-hook",    action="store_true",     help="Memories mapping left to Gowin (no gowin_distributed_memories).")
@@ -302,6 +314,8 @@ def main():
     parser.add_argument("--memory-hook-include", default=None,          help="Memories forced to distributed RAM (write port signals regex).")
     parser.add_argument("--with-jtagbone",     action="store_true",     help="Enable JTAGBone (CSRs over JTAG).")
     parser.add_argument("--with-usb3-debug",   action="store_true",     help="Enable USB3 bring-up debug CSRs.")
+    parser.add_argument("--with-usb3-counters", action="store_true",    help="Enable USB3 Bulk IN throughput counters CSRs.")
+    parser.add_argument("--usb3-max-burst",    default=USB3_MAX_BURST, type=int, help="USB3 Bulk IN Max Burst (packets slots).", choices=[2, 4, 8, 16])
     parser.add_argument("--usb3-pll",          default="QPLL0",         help="GTR12 lane PLL.", choices=["QPLL0", "QPLL1"])
     parser.add_argument("--device-version",    default="B",             help="GW5AT-15 device version (A: Gowin 1.9.10).", choices=["A", "B"])
     parser.add_argument("--place-option",      default=2, type=int,     help="Gowin place algorithm.", choices=[0, 1, 2, 3, 4])
@@ -317,17 +331,20 @@ def main():
         gowin_distributed_memories(platform, exclude=args.memory_hook_exclude, include=args.memory_hook_include)
 
     soc = SLogicSoC(platform,
-        sys_clk_freq      = args.sys_clk_freq,
-        sample_clk_freq   = args.sample_clk_freq,
-        sample_clk_source = args.sample_clk_source,
-        usb_vid           = args.usb_vid,
-        usb_pid           = args.usb_pid,
-        usb_serial        = args.usb_serial,
-        usb3_pll          = args.usb3_pll,
-        with_jtagbone     = args.with_jtagbone,
-        with_usb3_debug   = args.with_usb3_debug,
-        with_analyzer     = not args.no_analyzer,
-        with_flash        = not args.no_flash,
+        sys_clk_freq       = args.sys_clk_freq,
+        sample_clk_freq    = args.sample_clk_freq,
+        sample_clk_source  = args.sample_clk_source,
+        usb_vid            = args.usb_vid,
+        usb_pid            = args.usb_pid,
+        usb_serial         = args.usb_serial,
+        usb3_pll           = args.usb3_pll,
+        fifo_depth         = args.fifo_depth,
+        usb3_max_burst     = args.usb3_max_burst,
+        with_jtagbone      = args.with_jtagbone,
+        with_usb3_debug    = args.with_usb3_debug,
+        with_usb3_counters = args.with_usb3_counters,
+        with_analyzer      = not args.no_analyzer,
+        with_flash         = not args.no_flash,
     )
     builder = Builder(soc, output_dir=args.output_dir, csr_csv=os.path.join(args.output_dir, "csr.csv"),
         csr_json=os.path.join(args.output_dir, "csr.json"))

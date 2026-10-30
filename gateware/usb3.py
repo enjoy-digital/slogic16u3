@@ -26,7 +26,7 @@ from litex.soc.interconnect     import stream
 USB3_VID       = 0x1d50
 USB3_PID       = 0x605a
 USB3_DATA_EPT  = 1 # Bulk IN (Capture -> Host).
-USB3_MAX_BURST = 8
+USB3_MAX_BURST = 16 # Host windows of Max Burst packets (ex: AMD xHCI): 8 caps Bulk IN at ~370MB/s.
 
 # USB3 Device --------------------------------------------------------------------------------------
 

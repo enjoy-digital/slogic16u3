@@ -236,9 +236,12 @@ class Capture(LiteXModule):
             level_n.eq(level + chunk_bits),
         ]
 
-        # Converter (32-bit -> data_width).
-        self.conv = conv = stream.Converter(32, data_width)
-        self.comb += conv.source.connect(source, omit={"valid_token_count"})
+        # Converter (32-bit -> data_width), reset on start (partial word of an aborted capture).
+        self.conv = conv = ResetInserter()(stream.Converter(32, data_width))
+        self.comb += [
+            conv.reset.eq(start),
+            conv.source.connect(source, omit={"valid_token_count"}),
+        ]
         sink = conv.sink
 
         # FSM --------------------------------------------------------------------------------------

@@ -23,7 +23,7 @@ to PulseView:
   tests and sigrok/ngscopeclient end-to-end tests on the simulated device.
 
 > **Status: hardware bring-up in progress.** USB3 enumerates at 5Gbps on the SLogic16U3, the self-test captures
-> pass on hardware up to 200MB/s (all channel modes); 320/400MB/s, inputs, Flash pads and updates are next: see
+> pass on hardware at the full 400MB/s (all channel modes, sustained); inputs, Flash pads and updates are next: see
 > [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU loader.
 
 | | |
@@ -36,7 +36,7 @@ to PulseView:
 ```
              +------------------------------------- GW5AT-15 (LiteX SoC, no CPU) ----------------------------------+
   CH0-CH15 ──┼─► IDES8 x16 ─► Capture ───────► CDC ─► FIFO ─► USB3 Device Core ─► USB3-PIPE PHY ─► GTR12 Q0 ─┼──► USB-C
-             │   800MS/s      pattern/decim/       512x64     Bulk IN (EP1)       LTSSM/PIPE        5Gbps       │   (VL162)
+             │   800MS/s      pattern/decim/      2048x64     Bulk IN (EP1)       LTSSM/PIPE        5Gbps       │   (VL162)
              │   (100MHz x8)  4-8-16ch/packer                 EP0 CommUSB ──┐                                    │
              │                                                              ▼                                   │
   SPI Flash ◄┼── Flash core (pads mapped at runtime) ◄── Wishbone/CSRs ◄────┘                                    │

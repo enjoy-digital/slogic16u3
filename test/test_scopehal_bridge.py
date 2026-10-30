@@ -20,12 +20,20 @@ BRIDGE = os.path.join(ROOT, "software", "user", "build", "slogic_scopehal_bridge
 
 FS = 1e15
 
+def free_ports(n):
+    """n distinct free TCP ports (tests run in parallel: pytest -n)."""
+    socks = [socket.socket() for _ in range(n)]
+    for s in socks:
+        s.bind(("localhost", 0))
+    ports = [s.getsockname()[1] for s in socks]
+    for s in socks:
+        s.close()
+    return ports
+
 @unittest.skipUnless(os.path.exists(BRIDGE), "bridge not built (make -C software/user)")
 class TestScopehalBridge(unittest.TestCase):
-    scpi_port = 15025
-    wfm_port  = 15026
-
     def setUp(self):
+        self.scpi_port, self.wfm_port = free_ports(2)
         self.proc = subprocess.Popen([BRIDGE, "-d", "sim:fast", "--scpi-port", str(self.scpi_port),
             "--waveform-port", str(self.wfm_port)], stderr=subprocess.PIPE)
         for _ in range(100):

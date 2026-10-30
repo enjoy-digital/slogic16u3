@@ -75,10 +75,12 @@ pipelining (sample clock), MaxBurst 4.
      read back as zeros): FIFO buffered in USB3-PIPE, build check in `gowin_distributed_memories`.
    - Bring-up debug: `--with-jtagbone --with-usb3-debug` (LTSSM history, GTR12 status/UPAR, link statistics,
      Data Packets rings) over the JTAG port, `software/debug/usb3_debug.py`.
-2. **Done** (full bitstream over JTAG): `slogic_util check` 96/99 (counter pattern, all modes, 1kHz to 200MB/s,
-   no errors), `slogic_util bench` 16ch@100MHz: 200MB/s sustained. **Open**: 400MB/s (4ch@800MHz, 8ch@400MHz,
-   16ch@200MHz) and 320MB/s (16ch@160MHz) overflow at the start (4KB capture FIFO vs host gaps): buffering /
-   link efficiency.
+2. **Done** (full bitstream over JTAG): `slogic_util check` 99/99 (counter pattern, all modes, 1kHz to 400MB/s,
+   no errors), `slogic_util bench` 400MB/s sustained (30s) at 4ch@800MHz, 8ch@400MHz and 16ch@200MHz. Findings:
+   - 32-bit capture CDC to sys (250MB/s at 62.5MHz): 64-bit words converted in the sample clock domain.
+   - Bulk IN at ~370MB/s with a Max Burst of 8 (`--with-jtagbone --with-usb3-counters`: device waiting for a host
+     request ~50% of the time, ACK TPs NumP counted down from Max Burst by the AMD xHCI): Max Burst 16, capture
+     FIFO 2048x64 (16KB) against the host gaps.
 3. Inputs: IDES8 bit order (Q0 first, from the Gowin model), CH0-CH15 mapping, LVCMOS15UD33 threshold, 800MS/s
    on 4 channels.
 4. `slogic_util clock`: sample clock accuracy (GTR12 TX clock source).

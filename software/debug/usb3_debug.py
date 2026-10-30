@@ -10,6 +10,7 @@
 
     litex_server --jtag --jtag-config software/debug/openocd_slogic16u3.cfg &
     ./software/debug/usb3_debug.py --csr-csv build/csr.csv status
+    ./software/debug/usb3_debug.py --csr-csv build/csr.csv bulk-in
     ./software/debug/usb3_debug.py --csr-csv build/csr.csv history
     ./software/debug/usb3_debug.py --csr-csv build/csr.csv snapshot
     ./software/debug/usb3_debug.py --csr-csv build/csr.csv watch
@@ -113,6 +114,17 @@ class USB3Debug:
                 setup=(e >> 34) & 1))
         return r
 
+    BULK_IN_COUNTERS = ["cycles", "dps", "acks", "no_data", "no_win", "fc", "hp_wait", "all_sent",
+        "credit", "phy_wait", "tx_idle"]
+
+    def bulk_in(self):
+        """Bulk IN throughput counters (last capture)."""
+        n = len(self.BULK_IN_COUNTERS)
+        v = self.indexed("bulk_in", 32*n + 16*17)
+        c = {k: (v >> (32*i)) & 0xffffffff for i, k in enumerate(self.BULK_IN_COUNTERS)}
+        c["nump"] = [(v >> (32*n + 16*i)) & 0xffff for i in range(17)]
+        return c
+
     def upar_read(self, addr):
         self.reg("usb3_serdes_gtr12_upar_addr").write(addr)
         self.reg("usb3_serdes_gtr12_upar_ctrl").write(0b10)
@@ -143,7 +155,7 @@ def main():
     parser = argparse.ArgumentParser(description="SLogic16U3 USB3 bring-up debug (JTAGBone).")
     parser.add_argument("--csr-csv", default="build/csr.csv", help="CSR configuration file.")
     parser.add_argument("--port",    default=1234, type=int,  help="litex_server port.")
-    parser.add_argument("command",   choices=["status", "history", "snapshot", "rings", "watch", "upar-read", "upar-write"])
+    parser.add_argument("command",   choices=["status", "bulk-in", "history", "snapshot", "rings", "watch", "upar-read", "upar-write"])
     parser.add_argument("args",      nargs="*")
     args = parser.parse_args()
 
@@ -153,6 +165,16 @@ def main():
     try:
         if args.command == "status":
             print_status(d)
+        elif args.command == "bulk-in":
+            c      = d.bulk_in()
+            cycles = max(c["cycles"], 1)
+            rate   = c["dps"]*1024/(cycles/62.5e6)/1e6
+            print(f"{c['cycles']} cycles ({c['cycles']/62.5e6*1e3:.2f}ms), {c['dps']} DPs: "
+                f"{rate:.1f}MB/s, {cycles/max(c['dps'], 1):.1f} cycles/DP")
+            print("  ACK NumP: " + " ".join(f"{i}:{v}" for i, v in enumerate(c.pop("nump")) if v))
+            for k, v in c.items():
+                if k != "cycles":
+                    print(f"  {k:10s} {v:10d} {100*v/cycles:5.1f}%")
         elif args.command == "history":
             for t, s in d.history():
                 print(f"{t:10d}us {s}")

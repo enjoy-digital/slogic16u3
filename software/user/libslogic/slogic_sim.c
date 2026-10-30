@@ -32,7 +32,7 @@
 #define SIM_BASE_RATE   800000000ULL
 #define SIM_SAMPLE_CLK  100000000ULL
 #define SIM_RATIO       8
-#define SIM_FIFO_WORDS  512
+#define SIM_FIFO_WORDS  2048
 #define SIM_BUF_SIZE    (256*1024)
 #define SIM_FLASH_SIZE  (16*1024*1024)
 #define SIM_IDENT       "SLogic16U3 LiteX (simulated device)"
