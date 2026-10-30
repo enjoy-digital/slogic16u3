@@ -69,7 +69,7 @@ pipelining (sample clock), MaxBurst 4.
 1. **Done**: USB3 enumeration (5000M, `SLogic16U3 LiteX`, descriptors/strings), EP0 CSR accesses (1000/1000
    write/read), `slogic_util info` (U0). Findings:
    - QPLL1: no link (host sees no device); QPLL0 (Gowin's USB 3.0 PHY IP choice): default.
-   - CDR/QPLL0 settings from Gowin's USB 3.0 PHY IP configuration (`GW5AT15_USB3_CSR_OVERRIDES`): with the
+   - CDR/QPLL0 settings from Gowin's USB 3.0 PHY IP configuration (USB3-PIPE `GW5AT15_Q0_QPLL0_OVERRIDES`, `usb3_pipe/gw5`): with the
      serdes_toml_to_csr CDR value, RX 8b/10b errors prevent the training (Polling.Idle timeouts).
    - USB3-PIPE DPP RX adapter FIFO (asynchronous RAM read) mis-implemented by Gowin in block RAMs (EP0 Setups
      read back as zeros): FIFO buffered in USB3-PIPE, build check in `gowin_distributed_memories`.

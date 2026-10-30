@@ -125,11 +125,9 @@ class SLogicSoC(SLogicBaseSoC):
             self.cd_gtr12.clk.eq(self.crg.cd_sys.clk),
             self.cd_gtr12.rst.eq(self.crg.cd_sys.rst),
         ]
-        # GTR12 configuration, with Gowin's USB 3.0 PHY IP settings (Gowin 1.9.12, this board).
+        # GTR12 configuration (USB3-PIPE gw5: QPLL0 with Gowin's USB 3.0 PHY IP CDR/PLL settings).
         from usb3_pipe.gw5 import gw5_usb3_csr_config
-        csr_config = gw5_usb3_csr_overrides(
-            gw5_usb3_csr_config(0, "5G", "125M", position="Q0", pll=usb3_pll),
-            GW5AT15_USB3_CSR_OVERRIDES if usb3_pll == "QPLL0" else {})
+        csr_config = gw5_usb3_csr_config(0, "5G", "125M", position="Q0", pll=usb3_pll)
         usb3_serdes = GW5USB3SerDes(platform,
             sys_clk        = self.crg.cd_sys.clk,
             sys_clk_freq   = usb3_clk_freq,
@@ -226,30 +224,6 @@ class SLogicSoC(SLogicBaseSoC):
             phy.status.fields.u0.eq(phy.u0),
             phy.status.fields.ready.eq(phy.ready),
         ]
-
-# GTR12 Configuration ------------------------------------------------------------------------------
-
-# Registers set as in Gowin's USB 3.0 PHY IP configuration for the GW5AT-15 (Gowin 1.9.12, QPLL0) where
-# serdes_toml_to_csr differs ({address: value, None: write removed}):
-# - CDR (0x80025c, 0x800259/0x80025d not written): RX 8b/10b errors prevent the link training with
-#   the serdes_toml_to_csr settings (Polling.Idle timeouts, hardware).
-# - QPLL0/TX lane clock tree (0x80810c, 0x808120, 0x8082a0).
-GW5AT15_USB3_CSR_OVERRIDES = {
-    0x80025c : 0x00000071,
-    0x800259 : None,
-    0x80025d : None,
-    0x80810c : 0x10280108,
-    0x808120 : 0x0000001a,
-    0x8082a0 : 0x00003150,
-}
-
-def gw5_usb3_csr_overrides(csr_config, overrides):
-    for addr, value in overrides.items():
-        pattern = rf"upar_write_driver\({addr:#08x},0x[0-9A-Fa-f]+\)[^\n]*\n"
-        assert len(re.findall(pattern, csr_config)) == 1, f"{addr:#08x}"
-        new = "" if value is None else f"upar_write_driver({addr:#08x},{value:#010x}) # Gowin USB 3.0 PHY IP.\n"
-        csr_config = re.sub(pattern, new, csr_config)
-    return csr_config
 
 # Gowin Workaround ---------------------------------------------------------------------------------
 
