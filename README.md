@@ -33,6 +33,8 @@ to PulseView:
 
 ## Architecture
 
+[![SLogic16U3 gateware](doc/images/slogic_16u3-diagram.png)](doc/images/slogic_16u3-diagram.svg)
+
 ```
              +------------------------------------- GW5AT-15 (LiteX SoC, no CPU) ----------------------------------+
   CH0-CH15 ──┼─► IDES8 x16 ─► Capture ───────► CDC ─► FIFO ─► USB3 Device Core ─► USB3-PIPE PHY ─► GTR12 Q0 ─┼──► USB-C
@@ -129,7 +131,6 @@ This project adds GW5AT-15 support to LiteICLink/USB3-PIPE and completes the SLo
 - [slogic16u3-trace](https://github.com/radiolok/slogic16u3-trace): SLogic16U3 USB3/inputs pinout, DFU loader
   protocol and flash layout.
 - [Sipeed](https://sipeed.com): the hardware, the DFU loader and the libsigrok SLogic driver (stock protocol).
-- [Kenta Ida](https://github.com/ciniml/fpga_samples): first open USB3 stack on the SLogic16U3.
 
 ## License
 

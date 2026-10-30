@@ -29,6 +29,12 @@
   .scene h2 { position: absolute; left: 4.6vw; top: 7.5vh; margin: 0; font-weight: 700; font-size: 2.9vw; letter-spacing: 0.02em; }
   .scene h2 .x, #title .x { color: var(--acc); display: inline-block; transform: skewX(-12deg); }
   .scene .lede { position: absolute; left: 4.7vw; top: 15.5vh; font-family: 'Ubuntu Mono', monospace; font-size: 0.98vw; color: var(--dim); letter-spacing: 0.05em; }
+  #diagcard { position: absolute; left: 50%; top: 14.5vh; width: 74vw; transform: translateX(-50%); background: #fff;
+    border-radius: 0.4vw; box-shadow: 0 1.2vw 3.5vw rgba(0,0,0,0.6); overflow: hidden; }
+  #diagcard img { display: block; width: 100%; }
+  #diaghl { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #diagstep { left: 0; right: 0; bottom: 3.2vh; text-align: center; font-family: 'Ubuntu Mono', monospace; font-size: 1.05vw; letter-spacing: 0.06em; }
+  #diagstep .n { color: var(--acc); margin-right: 1vw; }
   .scene svg.full, .scene canvas.full { position: absolute; inset: 0; width: 100%; height: 100%; }
   .scene svg text { font-family: 'Ubuntu Mono', monospace; }
   /* terminal */
@@ -83,9 +89,9 @@
   <div class="o" id="stamp"><b>STOCK BITSTREAM → LITEX GATEWARE</b><span>slogic_16u3.py · LiteX/Migen · USB3-PIPE · the Sipeed DFU loader stays untouched</span></div>
   <div id="dim"></div>
 
-  <div class="scene" id="arch"><h2>USB3, <span class="x">in the FPGA</span>.</h2>
-    <div class="lede">No USB chip: the GW5AT-15 GTR12 SerDes is the USB3 PHY. PIPE, LTSSM, Link and Protocol layers in the fabric.</div>
-    <svg class="full" id="archsvg" viewBox="0 0 1920 1080"></svg></div>
+  <div class="scene" id="diag"><h2>The gateware, <span class="x">block by block</span>.</h2>
+    <div id="diagcard"><img id="diagimg" src="../images/slogic_16u3-diagram.png"><svg id="diaghl" viewBox="0 0 1600 885"></svg></div>
+    <div class="o" id="diagstep"></div></div>
 
   <div class="scene" id="cap"><h2>Capture, <span class="x">at 800 MS/s</span>.</h2>
     <div class="lede">IDES8 deserializers: 8 samples per cycle at 100 MHz. Decimation by N, 4/8/16 channel modes, streamed over Bulk IN.</div>
@@ -122,15 +128,16 @@
     </div>
     <div id="ossfoot">FPGA toolchain: <b>Gowin IDE</b> (vendor) · everything else open source · BSD-2-Clause</div></div>
 
-  <div class="scene" id="tests"><h2>Tested <span class="x">before the hardware</span>.</h2>
-    <div class="lede">Every layer runs against models: gateware in simulation, host stack on a simulated device.</div>
+  <div class="scene" id="tests"><h2>Tested <span class="x">on models, then on the board</span>.</h2>
+    <div class="lede">Every layer runs against models first: gateware in simulation, host stack on a simulated device.</div>
     <div class="list" id="testlist" style="left:4.7vw; top:27vh;">
       <div class="it"><span class="ck">✓</span><b>Migen unit tests</b><span>capture (dividers/modes/limits/overflow), flash core with a SPI Flash model</span></div>
       <div class="it"><span class="ck">✓</span><b>USB3 system simulation</b><span>USB3-PIPE host model ↔ Device Core ↔ SoC: CSRs over EP0, captures over Bulk IN</span></div>
       <div class="it"><span class="ck">✓</span><b>libslogic</b><span>175 checks on the simulated device: captures, unpacking, flash update guards</span></div>
       <div class="it"><span class="ck">✓</span><b>sigrok-cli · ngscopeclient bridge</b><span>end-to-end on the simulated device</span></div>
       <div class="it"><span class="ck">✓</span><b>Gowin build</b><span>GW5AT-15 bitstream: USB3 + capture + flash</span></div>
-      <div class="it"><span class="ck next">→</span><b>hardware bring-up</b><span>next: USB3 link, inputs, rates on the real SLogic16U3</span></div>
+      <div class="it"><span class="ck">✓</span><b>on the SLogic16U3</b><span>USB3 at 5 Gb/s · self-test 99/99 · 400 MB/s sustained</span></div>
+      <div class="it"><span class="ck next">→</span><b>next</b><span>inputs on real signals, Flash update and DFU on the hardware</span></div>
     </div></div>
 
   <h1 class="o" id="title">SLOGIC<span class="x">16U3</span></h1>
@@ -140,7 +147,7 @@
     <div><b>USB3</b>5 Gb/s in the FPGA transceivers · USB3-PIPE</div>
     <div><b>SOFTWARE</b>libslogic (C) · sigrok/PulseView · ngscopeclient</div>
     <div><b>UPDATE</b>remote update over USB3 · DFU recovery always</div>
-    <div><b>STATUS</b>gateware built · validated in simulation</div>
+    <div><b>STATUS</b>USB3 5 Gb/s · 400 MB/s captures on hardware</div>
   </div>
   <div class="o" id="cta">github.com/<b>enjoy-digital/slogic_16u3</b></div>
   <div class="o" id="cta2">built with <b>LiteX</b> · github.com/enjoy-digital/litex</div>
@@ -160,8 +167,11 @@ import { buildDevice } from './board.js';
 
 const Q = new URLSearchParams(location.search);
 const W = innerWidth, H = innerHeight;
-const DURATION = window.DURATION = 66.0;      // 33 bars at 120 BPM (music.py), cuts on the bar grid
-const HERO_T = 63.0;
+const DURATION = window.DURATION = 76.0;      // 38 bars at 120 BPM (music.py), cuts on the bar grid
+const HERO_T = 73.0;
+// The scenes after the diagram walkthrough (20-36 s) keep their original timings (TO: 10 s earlier); the
+// camera moves on slowly behind it.
+const TO = T => T < 20 ? T : T < 36 ? 20 + (T - 20) * 6 / 16 : T - 10;
 const STILL = Q.has('still'), CLEAN = Q.has('clean');
 const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -271,88 +281,56 @@ const C_PATH = [
 ];
 const ALL_CALLOUTS = [...C_OUT, ...C_IN, ...C_PATH];
 
-// ---------------------------------------------------------------- architecture scene
-const archsvg = $('archsvg');
-const ARCH = { boxes: [], links: [], flows: [] };
-{
-  const defs = svgEl(archsvg, 'defs');
-  const mk = svgEl(defs, 'marker', { id: 'ah', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto' });
-  svgEl(mk, 'path', { d: 'M0,0 L10,5 L0,10 z', fill: '#5cff8a' });
-  const row = [
-    ['CH0-CH15', 'LVCMOS inputs', 'io'],
-    ['SAMPLER', 'IDES8 · ×8/cycle', 'sample'],
-    ['CAPTURE', '/N · 4/8/16ch · pack', 'sample'],
-    ['FIFO', 'CDC · 64-bit', 'sys'],
-    ['USB3 CORE', 'Link · Bulk IN', 'sys'],
-    ['USB3 PHY', 'PIPE · LTSSM', 'tx'],
-    ['GTR12', 'SerDes Q0 · 5 Gb/s', 'tx'],
-    ['USB-C', 'host', 'io'],
-  ];
-  const bw = 186, bh = 104, gap = 34, x0 = (1920 - (8 * bw + 7 * gap)) / 2, y = 400;
-  const cdc = { io: '#8b93a1', sample: '#ffb347', sys: '#5cff8a', tx: '#4fc3ff' };
-  row.forEach(([t, s, cd], i) => {
-    const x = x0 + i * (bw + gap);
-    const g = svgEl(archsvg, 'g', { opacity: 0 });
-    svgEl(g, 'rect', { x, y, width: bw, height: bh, fill: 'rgba(12,15,20,0.92)', stroke: cdc[cd], 'stroke-width': 2 });
-    svgEl(g, 'text', { x: x + bw / 2, y: y + 44, 'text-anchor': 'middle', fill: '#e9edf3', 'font-size': 23, 'letter-spacing': 2 }, t);
-    svgEl(g, 'text', { x: x + bw / 2, y: y + 76, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 16 }, s);
-    ARCH.boxes.push({ g, t0: 0.4 + i * 0.35 });
-    if (i < row.length - 1) {
-      const l = svgEl(archsvg, 'line', { x1: x + bw + 2, y1: y + bh / 2, x2: x + bw + gap - 4, y2: y + bh / 2, stroke: '#5cff8a', 'stroke-width': 2.5, 'marker-end': 'url(#ah)', opacity: 0 });
-      ARCH.links.push({ l, t0: 0.6 + i * 0.35 });
-    }
-  });
-  // clock domains
-  const doms = [['sample · 100 MHz', 1, 2, '#ffb347'], ['sys · 62.5 MHz · 64-bit', 3, 4, '#5cff8a'], ['tx · 125 MHz', 5, 6, '#4fc3ff']];
-  for (const [t, a, b, col] of doms) {
-    const xa = x0 + a * (bw + gap), xb = x0 + b * (bw + gap) + bw;
-    const g = svgEl(archsvg, 'g', { opacity: 0 });
-    svgEl(g, 'line', { x1: xa, y1: y - 30, x2: xb, y2: y - 30, stroke: col, 'stroke-width': 2, 'stroke-dasharray': '6 6' });
-    svgEl(g, 'text', { x: (xa + xb) / 2, y: y - 44, 'text-anchor': 'middle', fill: col, 'font-size': 17, 'letter-spacing': 1.5 }, t);
-    ARCH.boxes.push({ g, t0: 3.4 });
-  }
-  // control/update row
-  const ctl = [
-    ['EP0 WISHBONE', 'CommUSB · CSR accesses', 4],
-    ['ANALYZER CSRS', 'mode · divider · limit', 2],
-    ['FLASH CORE', 'MSPI · remote update', 3],
-  ];
-  const yc = 680;
-  ctl.forEach(([t, s, col], i) => {
-    const x = x0 + col * (bw + gap) - (i === 2 ? 0 : 0);
-    const g = svgEl(archsvg, 'g', { opacity: 0 });
-    svgEl(g, 'rect', { x, y: yc, width: bw, height: bh, fill: 'rgba(12,15,20,0.92)', stroke: '#8b93a1', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' });
-    svgEl(g, 'text', { x: x + bw / 2, y: yc + 44, 'text-anchor': 'middle', fill: '#e9edf3', 'font-size': 20, 'letter-spacing': 1.5 }, t);
-    svgEl(g, 'text', { x: x + bw / 2, y: yc + 76, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 15 }, s);
-    ARCH.boxes.push({ g, t0: 3.0 + i * 0.3 });
-  });
-  const xEp0 = x0 + 4 * (bw + gap), xAn = x0 + 2 * (bw + gap), xFl = x0 + 3 * (bw + gap);
-  const bus = svgEl(archsvg, 'g', { opacity: 0 });
-  svgEl(bus, 'line', { x1: xEp0 + bw / 2, y1: y + bh, x2: xEp0 + bw / 2, y2: yc, stroke: '#8b93a1', 'stroke-width': 2 });
-  svgEl(bus, 'line', { x1: xAn + bw / 2, y1: yc + bh + 30, x2: xEp0 + bw / 2, y2: yc + bh + 30, stroke: '#8b93a1', 'stroke-width': 2 });
-  for (const xx of [xAn, xFl, xEp0]) svgEl(bus, 'line', { x1: xx + bw / 2, y1: yc + bh, x2: xx + bw / 2, y2: yc + bh + 30, stroke: '#8b93a1', 'stroke-width': 2 });
-  svgEl(bus, 'line', { x1: xAn + bw / 2, y1: yc, x2: xAn + bw / 2, y2: y + bh, stroke: '#8b93a1', 'stroke-width': 2, 'stroke-dasharray': '4 4' });
-  svgEl(bus, 'text', { x: (xAn + xEp0) / 2 + bw / 2, y: yc + bh + 58, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 16, 'letter-spacing': 2 }, 'CSR BUS · litex_server --usb · libslogic');
-  ARCH.boxes.push({ g: bus, t0: 3.8 });
-  // flowing samples along the main row
-  for (let i = 0; i < 7; i++) ARCH.flows.push(svgEl(archsvg, 'circle', { r: 4.5, fill: '#c8ffd8', opacity: 0 }));
-  ARCH.x0 = x0; ARCH.bw = bw; ARCH.gap = gap; ARCH.y = y + bh / 2;
-  const foot = svgEl(archsvg, 'text', { x: 960, y: 960, 'text-anchor': 'middle', fill: '#8b93a1', 'font-size': 20, 'letter-spacing': 1.5, opacity: 0 },
-    'USB3 PHY + Device Core + capture + flash core in a 15K LUT GW5AT-15 · 2/2 PLLs');
-  ARCH.boxes.push({ g: foot, t0: 4.4 });
-}
-function placeArch(T, k) {
-  const s = $('arch'); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
+// ---------------------------------------------------------------- diagram scene (gateware walkthrough)
+// The LiteX diagram (doc/images/slogic_16u3-diagram.py, its boxes in diagram_boxes.json), the data flow
+// lit block by block, one step every 3 beats (music.py: a blip on each step).
+const DIAG_T0 = 20.0, DIAG_LEN = 16.0, DIAG_STEP0 = 21.0, DIAG_STEP = 1.5;
+const DBOX = Object.fromEntries([{"title": "Probes", "x1": 10, "y1": 118, "x2": 150, "y2": 206}, {"title": "Host PC", "x1": 1460, "y1": 90, "x2": 1590, "y2": 234}, {"title": "2x10 header", "x1": 185, "y1": 112, "x2": 315, "y2": 212}, {"title": "SPI flash", "x1": 185, "y1": 300, "x2": 315, "y2": 380}, {"title": "VL162", "x1": 1295, "y1": 122, "x2": 1425, "y2": 202}, {"title": "125 MHz osc", "x1": 1115, "y1": 635, "x2": 1245, "y2": 705}, {"title": "Sampler", "x1": 355, "y1": 112, "x2": 485, "y2": 212}, {"title": "Capture", "x1": 507, "y1": 112, "x2": 637, "y2": 212}, {"title": "CDC + FIFO", "x1": 659, "y1": 112, "x2": 789, "y2": 212}, {"title": "USB3 Core", "x1": 811, "y1": 112, "x2": 941, "y2": 212}, {"title": "USB3 PHY", "x1": 963, "y1": 112, "x2": 1093, "y2": 212}, {"title": "GTR12", "x1": 1115, "y1": 112, "x2": 1245, "y2": 212}, {"title": "Flash core", "x1": 355, "y1": 300, "x2": 485, "y2": 380}, {"title": "Analyzer CSRs", "x1": 507, "y1": 300, "x2": 637, "y2": 380}, {"title": "EP0 bridge", "x1": 811, "y1": 300, "x2": 941, "y2": 380}, {"title": "JTAGBone", "x1": 963, "y1": 300, "x2": 1093, "y2": 380}, {"title": "CRG", "x1": 963, "y1": 465, "x2": 1108, "y2": 545}].map(b => [b.title, b]));
+const DSTEPS = [
+  [['Probes', '2x10 header'], 'inputs', '16 probes · CH0-CH15 through the 2x10 header and its 0.47 dividers'],
+  [['Sampler'], 'sampler', 'IDES8 deserializers: 8 samples per 100 MHz cycle · 800 MS/s'],
+  [['Capture'], 'capture', 'test pattern · decimation /N · 4, 8 or 16 channels packed in 64-bit words'],
+  [['CDC + FIFO'], 'buffer', 'sample to sys clock crossing · a 16 KB FIFO absorbs the host gaps'],
+  [['USB3 Core'], 'usb3 core', 'USB3-PIPE Device Core: Link and Protocol layers · Bulk IN, bursts of 16 packets'],
+  [['USB3 PHY', 'GTR12', 'VL162'], 'usb3 phy', 'LTSSM and PIPE in the fabric, the GTR12 SerDes as the PHY · 5 Gb/s'],
+  [['Host PC'], 'host', 'libslogic · sigrok/PulseView · ngscopeclient · 400 MB/s sustained'],
+  [['EP0 bridge', 'Analyzer CSRs'], 'control', 'no CPU: the host drives the CSRs over EP0 through a Wishbone bridge'],
+  [['Flash core', 'SPI flash'], 'update', 'remote update over USB3 · the Sipeed DFU loader is never written'],
+];
+const diaghl = $('diaghl');
+const DVEIL = svgEl(diaghl, 'path', { fill: 'rgba(8,9,11,0.5)', 'fill-rule': 'evenodd', opacity: 0 });
+const DRECTS = Array.from({ length: 3 }, () => svgEl(diaghl, 'rect', { fill: 'none', stroke: '#2fd16a', 'stroke-width': 4, rx: 3, opacity: 0 }));
+const DDOT = svgEl(diaghl, 'circle', { r: 9, fill: '#2fd16a', stroke: '#fff', 'stroke-width': 2.5, opacity: 0 });
+const bcx = b => [(b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2];
+function placeDiagram(T, k) {
+  const s = $('diag'); s.style.opacity = k; s.style.visibility = k > 0.001 ? 'visible' : 'hidden';
   if (k <= 0.001) return;
-  const t = T - 20.0;
-  for (const b of ARCH.boxes) b.g.setAttribute('opacity', E.out(seg(t, b.t0, b.t0 + 0.4)));
-  for (const l of ARCH.links) l.l.setAttribute('opacity', E.out(seg(t, l.t0, l.t0 + 0.4)));
-  const kf = seg(t, 3.2, 3.6);
-  ARCH.flows.forEach((c, i) => {   // samples crossing the links
-    const u = ((t * 1.6 - i * 0.18) % 1 + 1) % 1, xs = ARCH.x0 + (i + 1) * ARCH.bw + i * ARCH.gap;
-    c.setAttribute('cx', xs + 4 + u * (ARCH.gap - 14)); c.setAttribute('cy', ARCH.y - 12);
-    c.setAttribute('opacity', kf * 0.9 * Math.sin(Math.PI * u));
-  });
+  const t = T - DIAG_T0;
+  $('diagcard').style.transform = `translateX(-50%) scale(${0.96 + 0.04 * E.out(seg(t, 0, 0.8))})`;
+  const i = Math.floor((T - DIAG_STEP0) / DIAG_STEP), st = DSTEPS[i];
+  const kv = Math.min(seg(T, DIAG_STEP0 - 0.2, DIAG_STEP0 + 0.3), 1 - seg(T, DIAG_STEP0 + DSTEPS.length * DIAG_STEP - 0.2, DIAG_STEP0 + DSTEPS.length * DIAG_STEP + 0.4));
+  if (st && kv > 0.001) {
+    const u = (T - DIAG_STEP0 - i * DIAG_STEP) / DIAG_STEP, bs = st[0].map(n => DBOX[n]);
+    const pad = 6, holes = bs.map(b => `M${b.x1 - pad},${b.y1 - pad}h${b.x2 - b.x1 + 2 * pad}v${b.y2 - b.y1 + 2 * pad}h${-(b.x2 - b.x1 + 2 * pad)}z`).join('');
+    DVEIL.setAttribute('d', `M0,0h1600v885h-1600z${holes}`); DVEIL.setAttribute('opacity', kv);
+    DRECTS.forEach((r, j) => {
+      const b = bs[j]; r.setAttribute('opacity', b ? kv * E.out(seg(u, 0, 0.25)) : 0);
+      if (b) { r.setAttribute('x', b.x1 - pad); r.setAttribute('y', b.y1 - pad); r.setAttribute('width', b.x2 - b.x1 + 2 * pad); r.setAttribute('height', b.y2 - b.y1 + 2 * pad); }
+    });
+    // Flow (data path steps): a dot from the previous step's last block to this step's first one.
+    const prev = i > 0 ? DBOX[DSTEPS[i - 1][0].at(-1)] : null;
+    if (prev && i < 7) {
+      const [ax, ay] = bcx(prev), [bx, by] = bcx(bs[0]), m = E.inOut(seg(u, 0, 0.45));
+      DDOT.setAttribute('cx', lerp(ax, bx, m)); DDOT.setAttribute('cy', lerp(ay, by, m)); DDOT.setAttribute('opacity', kv * (1 - seg(u, 0.45, 0.6)));
+    } else DDOT.setAttribute('opacity', 0);
+    $('diagstep').innerHTML = `<span class="n">${String(i + 1).padStart(2, '0')} · ${st[1].toUpperCase()}</span>${st[2]}`;
+    show($('diagstep'), kv * Math.min(E.out(seg(u, 0, 0.2)), 1 - seg(u, 0.88, 1.0) * (i < DSTEPS.length - 1 ? 1 : 0)), 6);
+  } else {
+    DVEIL.setAttribute('opacity', 0); DRECTS.forEach(r => r.setAttribute('opacity', 0)); DDOT.setAttribute('opacity', 0);
+    const ke = seg(T, DIAG_STEP0 + DSTEPS.length * DIAG_STEP, DIAG_STEP0 + DSTEPS.length * DIAG_STEP + 0.5);
+    $('diagstep').innerHTML = '<span class="n">ALL IN THE FPGA</span>no USB chip, no CPU · USB3 PHY, Device Core, capture and flash in a 15K LUT GW5AT-15';
+    show($('diagstep'), ke, 6);
+  }
 }
 
 // ---------------------------------------------------------------- capture scene (waveforms)
@@ -586,8 +564,8 @@ function pose(T) {
 }
 
 // ---------------------------------------------------------------- render
-window.renderAt = function (T) {
-  const t = T;
+window.renderAt = function (TR) {
+  const T = TO(TR), t = T;
   const p = pose(T);
   camera.position.set(...p.cam); camera.lookAt(...p.tgt);
   D.root.rotation.y = p.rot;
@@ -613,10 +591,10 @@ window.renderAt = function (T) {
   for (const [c, a, b] of ALL_CALLOUTS) placeCallout(c, STILL ? 0 : win(t, a, b, 0.5));
 
   // full screen scenes
-  const kA = win(T, 20.0, 26.0, 0.5), kC = win(T, 26.0, 34.0, 0.4), kS = win(T, 34.0, 40.0, 0.4), kU = win(T, 40.0, 46.0, 0.4), kO = win(T, 46.0, 54.0, 0.4), kT = win(T, 54.0, 58.0, 0.4);
+  const kD = win(TR, DIAG_T0, DIAG_T0 + DIAG_LEN, 0.5), kC = win(T, 26.0, 34.0, 0.4), kS = win(T, 34.0, 40.0, 0.4), kU = win(T, 40.0, 46.0, 0.4), kO = win(T, 46.0, 54.0, 0.4), kT = win(T, 54.0, 58.0, 0.4);
   const kDim = win(T, 20.0, 58.0, 0.5);
   $('dim').style.opacity = kDim; $('dim').style.visibility = kDim > 0.001 ? 'visible' : 'hidden';
-  placeArch(T, kA); placeCapture(T, kC); placeSoftware(T, kS); placeUpdate(T, kU);
+  placeDiagram(TR, kD); placeCapture(T, kC); placeSoftware(T, kS); placeUpdate(T, kU);
   placeScene('oss', T, 46.4, kO, 0.35); placeScene('tests', T, 54.2, kT, 0.32);
   $('hud').style.opacity = $('tags').style.opacity = clamp(1 - kDim);
 
@@ -634,7 +612,7 @@ window.renderAt = function (T) {
     show(ce, k, 6); cr.style.visibility = 'visible'; cr.style.opacity = k; cr.style.transform = `scaleX(${E.out(seg(T, cap[0], cap[0] + 0.8))})`;
   } else { show(ce, 0); cr.style.opacity = 0; }
   const tc = $('timecode');
-  tc.textContent = `SLOGIC16U3 · T+${T.toFixed(2).padStart(5, '0')}`;
+  tc.textContent = `SLOGIC16U3 · T+${TR.toFixed(2).padStart(5, '0')}`;
   show(tc, STILL || CLEAN ? 0 : win(T, 0.4, 57.7, 0.4), 0);
 
   // end card

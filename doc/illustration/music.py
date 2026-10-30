@@ -5,13 +5,13 @@
 # Copyright (c) 2026 Florent Kermarrec <florent@enjoy-digital.fr>
 # SPDX-License-Identifier: BSD-2-Clause
 
-"""Synthesize the SLogic16U3 video soundtrack: 120 BPM, D minor, 66 s (the film's length).
+"""Synthesize the SLogic16U3 video soundtrack: 120 BPM, D minor, 76 s (the film's length).
 
 Section map (bars; 1 bar = 2 s), the video's chapter cuts use the same grid:
   0-2 product | 2-5 hardware | 5-7 inside (riser, the bitstream swap hits bar 6)
-  7-10 data path (drop) | 10-13 USB3 in the FPGA (half-time, blips) | 13-17 capture (drop, lead)
-  17-20 software (half-time) | 20-23 remote update (lead) | 23-27 open source (lead) | 27-29 tests (breakdown)
-  29-33 end card (final hit on the title, bed)
+  7-10 data path (drop) | 10-18 gateware diagram walkthrough (half-time, a blip on each step)
+  18-22 capture (drop, lead) | 22-25 software (half-time) | 25-28 remote update (lead)
+  28-32 open source (lead) | 32-34 tests (breakdown) | 34-38 end card (final hit on the title, bed)
 
 Instruments and mix follow the TriXium soundtrack generator (enjoy-digital/trixium).
 
@@ -28,7 +28,7 @@ SR    = 44100
 BPM   = 120
 BEAT  = 60 / BPM
 BAR   = 4 * BEAT
-NBARS = 33
+NBARS = 38
 N     = int(NBARS * BAR * SR)
 rng   = np.random.default_rng(11)
 
@@ -42,8 +42,8 @@ def add(dst, x, at):
 def mtof(m): return 440.0 * 2 ** ((m - 69) / 12)
 
 def section(b):
-    for end, name in [(2, "product"), (5, "inside"), (7, "scan"), (10, "script"), (13, "arch"),
-                      (17, "data"), (20, "arch"), (23, "latency"), (27, "litex"), (29, "credits")]:
+    for end, name in [(2, "product"), (5, "inside"), (7, "scan"), (10, "script"), (18, "arch"),
+                      (22, "data"), (25, "arch"), (28, "latency"), (32, "litex"), (34, "credits")]:
         if b < end: return name
     return "end"
 
@@ -164,10 +164,10 @@ for b in range(NBARS):
     if b == 6:       # snare roll into the drop (bar 7)
         for i in range(16):
             add(drums, S * (0.2 + 0.6 * i / 16), t0 + i * BAR / 16)
-    if b in (12, 19):  # rolls out of the architecture and the race
+    if b in (17, 24):  # rolls out of the diagram and the software scene
         for i in range(8):
             add(drums, S * (0.25 + 0.5 * i / 8), t0 + 2 * BEAT + i * BEAT / 4)
-    if b in (2, 7, 13, 20, 23, 29):
+    if b in (2, 7, 18, 25, 28, 34):
         tt = t_(2.0)
         add(fx, sosfilt(butter(2, 3500, "hp", fs=SR, output="sos"), rng.standard_normal(len(tt))) * np.exp(-tt * 2.2) * 0.22, t0)
 
@@ -199,13 +199,13 @@ for b in range(NBARS):
 # Lead melody in the drops (4-bar phrase).
 MEL = [(0, 74, 1.5), (1.5, 72, 0.5), (2, 70, 1), (3, 72, 1), (4, 70, 1.5), (5.5, 69, 0.5), (6, 67, 2),
        (8, 65, 1.5), (9.5, 67, 0.5), (10, 69, 1), (11, 70, 1), (12, 72, 2), (14, 69, 1), (15, 65, 1)]
-for b0, until in [(13, 17), (20, 23), (23, 27)]:
+for b0, until in [(18, 22), (25, 28), (28, 32)]:
     for o, m, d in MEL:
         at = b0 * BAR + o * BEAT
         if at >= until * BAR: continue
         dur = d * BEAT
         tt  = t_(dur + 0.3)
-        f   = mtof(m + (12 if b0 >= 20 and o >= 8 else 0)) * (1 + 0.004 * np.sin(2 * np.pi * 5.5 * tt) * np.clip(tt - 0.2, 0, 1))
+        f   = mtof(m + (12 if b0 >= 25 and o >= 8 else 0)) * (1 + 0.004 * np.sin(2 * np.pi * 5.5 * tt) * np.clip(tt - 0.2, 0, 1))
         ph  = np.cumsum(f) / SR
         x   = (2 * (ph % 1) - 1) * 0.6 + (2 * ((ph * 1.005) % 1) - 1) * 0.4
         add(lead, x * env(len(x), 0.01, 0.3, 0.7, 0.15, dur) * 0.12, at)
@@ -215,18 +215,21 @@ for m in [62, 69, 74, 77]:
     x = saw(mtof(m), 1.5, detune=(-10, 10)) * env(int(1.5 * SR), 0.002, 0.4, 0.0, 0.3, 0.3)
     add(fx, x * 0.07, 6 * BAR)
 
-# Architecture: data blips on the beats while the diagram draws (video: items every 0.5 s from 20.5 s).
+# Diagram walkthrough: a blip on each step (video: 9 steps every 3 beats from 21 s), a double one on the
+# last (all the blocks lit).
 for i in range(9):
-    add(fx, blip(CHORDS[(10 + i // 4) % 4][i % 3] + 24), 10 * BAR + BEAT + i * BEAT)
+    add(fx, blip(CHORDS[(10 + i // 3) % 4][i % 3] + 24), 21.0 + i * 3 * BEAT)
+for d in (0, BEAT / 2):
+    add(fx, blip(CHORDS[0][0] + 36), 21.0 + 9 * 3 * BEAT + d)
 
-# Final hit on the end card title (bar 29).
-add(fx, np.sin(2 * np.pi * 36.7 * t_(3.0)) * np.exp(-t_(3.0) * 1.5) * 0.6, 29 * BAR)
+# Final hit on the end card title (bar 34).
+add(fx, np.sin(2 * np.pi * 36.7 * t_(3.0)) * np.exp(-t_(3.0) * 1.5) * 0.6, 34 * BAR)
 for m in [50, 57, 62, 65, 69]:
     x = saw(mtof(m), 4.0, detune=(-12, 0, 12)) * env(int(4 * SR), 0.005, 1.2, 0.3, 1.0, 1.5)
-    add(fx, x * 0.09, 29 * BAR)
+    add(fx, x * 0.09, 34 * BAR)
 
 # Risers and sub impacts on the cuts.
-for at, d in [(4, 1.0), (14, 2.0), (20, 1.0), (26, 1.0), (34, 1.0), (40, 2.0), (46, 1.0), (54, 1.0), (58, 2.0)]:
+for at, d in [(4, 1.0), (14, 2.0), (20, 1.0), (36, 1.0), (44, 1.0), (50, 2.0), (56, 1.0), (64, 1.0), (68, 2.0)]:
     add(fx, riser(d), at - d)
     add(fx, impact(), at)
 
@@ -238,7 +241,7 @@ def cut_arp(t):
     if s == "product": return 500 + 1500 * (b / 2) ** 2
     if s == "scan":    return 1500 + 3500 * ((b - 5) / 2) ** 2
     if s == "arch":    return 1400
-    if s == "credits": return 900 + 2500 * ((b - 27) / 2) ** 2
+    if s == "credits": return 900 + 2500 * ((b - 32) / 2) ** 2
     if s == "end":     return 2500
     return 5200
 
