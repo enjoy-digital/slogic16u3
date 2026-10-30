@@ -24,12 +24,13 @@ from litex.gen import *
 from litex.soc.interconnect.csr import *
 from litex.soc.interconnect     import stream
 
-from gateware.capture import Capture
+from gateware.capture   import Capture
+from gateware.generator import PatternGenerator
 
 # Constants ----------------------------------------------------------------------------------------
 
 ANALYZER_MAGIC   = 0x534c4f47 # "SLOG".
-ANALYZER_VERSION = 0x00010000 # Major[31:16], Minor[15:0].
+ANALYZER_VERSION = 0x00010001 # Major[31:16], Minor[15:0] (1.1: pattern generator).
 
 # Analyzer -----------------------------------------------------------------------------------------
 
@@ -53,6 +54,13 @@ class Analyzer(LiteXModule):
         capture = Capture(nchannels, ratio, data_width=data_width)
         self.capture = capture = ClockDomainsRenamer(cd)(capture)
         self.comb += capture.samples.eq(self.samples)
+
+        # Pattern Generator (restarts with each capture).
+        self.generator = generator = ClockDomainsRenamer(cd)(PatternGenerator(nchannels, ratio))
+        self.comb += [
+            generator.enable.eq(capture.enable),
+            capture.generator.eq(generator.word),
+        ]
 
         # Control (sys -> cd).
         self.enable  = Signal()
@@ -155,6 +163,7 @@ class Analyzer(LiteXModule):
             CSRField("pattern", size=2, offset=8, values=[
                 ("``0b00``", "Inputs."),
                 ("``0b01``", "Counter (test pattern)."),
+                ("``0b10``", "Pattern generator (UART, SPI, PWM, clock, Gray counter)."),
             ]),
         ])
         self._divider = CSRStorage(32, reset=1, description="Decimation (samplerate = base_rate/divider).")

@@ -252,8 +252,13 @@ int slogic_config_check(const struct slogic_info *info, const struct slogic_conf
                  (unsigned long long)slogic_max_samplerate(info, config->channels));
         return SLOGIC_ERR_ARG;
     }
-    if (config->pattern > SLOGIC_PATTERN_COUNTER) {
+    if (config->pattern > SLOGIC_PATTERN_GENERATOR) {
         snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
+        return SLOGIC_ERR_ARG;
+    }
+    if (config->pattern == SLOGIC_PATTERN_GENERATOR && (info->version & 0xffff) < 1) {
+        snprintf(msg, msg_size, "pattern generator needs gateware >= 1.1 (device: %u.%u)",
+                 info->version >> 16, info->version & 0xffff);
         return SLOGIC_ERR_ARG;
     }
     return SLOGIC_OK;
@@ -400,6 +405,27 @@ int slogic_capture_stop(struct slogic_dev *dev, struct slogic_status *st)
 
 /* Data */
 /*------*/
+
+uint16_t slogic_generator_sample(uint64_t t)
+{
+    static const uint8_t spi[4] = { 0x53, 0x4c, 0x4f, 0x47 }; /* "SLOG". */
+    const char    *text = SLOGIC_GENERATOR_TEXT;
+    const uint64_t len  = sizeof(SLOGIC_GENERATOR_TEXT) - 1;
+    uint64_t c = t/8;                     /* Cycle (UART: not wrapped). */
+    uint32_t n = (uint32_t)(c & 0x3ffff); /* 18-bit cycle counter. */
+    unsigned j = t & 7;
+
+    unsigned bit  = (c/100) % 12;
+    uint8_t  ch   = (uint8_t)text[(c/1200) % len];
+    unsigned uart = bit == 2 ? 0 : (bit >= 3 && bit <= 10) ? (ch >> (bit - 3)) & 1 : 1; /* Idle x2, start, data, stop. */
+    unsigned cs_n = (n % 512) >= 256;
+    unsigned sck  = cs_n ? 0 : (n >> 2) & 1;
+    unsigned mosi = cs_n ? 0 : (spi[(n >> 6) & 3] >> (7 - ((n >> 3) & 7))) & 1;
+    unsigned pwm  = (n % 1024) < 4*((n >> 10) % 256);
+    unsigned clk  = j >= 4;
+    unsigned gray = (n & 0x3ff) ^ ((n & 0x3ff) >> 1);
+    return (uint16_t)(uart | cs_n << 1 | sck << 2 | mosi << 3 | pwm << 4 | clk << 5 | gray << 6);
+}
 
 unsigned slogic_unitsize(unsigned channels)
 {

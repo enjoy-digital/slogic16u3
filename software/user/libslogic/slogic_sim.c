@@ -4,7 +4,8 @@
  * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
  *
  * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
- * - Capture stream: counter test pattern (sample i = i*divider, as the gateware) or synthetic inputs (CH0:
+ * - Capture stream: counter test pattern (sample i = i*divider, as the gateware), pattern generator
+ *   (slogic_generator_sample(), as the gateware) or synthetic inputs (CH0:
  *   UART 1Mbaud "Hello from SLogic16U3!", CHn: square wave toggling every 2^(n+2) base samples), packed as
  *   the gateware (32-bit packer, last word
  *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
@@ -200,6 +201,8 @@ static uint16_t sim_sample(const struct sim *s, uint64_t i)
     uint64_t t = i*(s->divider ? s->divider : 1); /* Base sample index. */
     if (((s->control >> 8) & 3) == SLOGIC_PATTERN_COUNTER)
         return (uint16_t)t;
+    if (((s->control >> 8) & 3) == SLOGIC_PATTERN_GENERATOR)
+        return slogic_generator_sample(t);
     /* CH0: UART, CHn (n >= 1): square wave toggling every 2^(n+2) base samples. */
     return (uint16_t)(((t >> 2) & ~1u) | sim_uart(t));
 }
@@ -303,7 +306,7 @@ static uint32_t sim_read(struct sim *s, uint32_t addr)
     }
     switch (addr) {
     case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-    case SLOGIC_ANALYZER_VERSION:   return 0x00010000;
+    case SLOGIC_ANALYZER_VERSION:   return 0x00010001;
     case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
     case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
     case SLOGIC_ANALYZER_CONTROL:   return s->control;

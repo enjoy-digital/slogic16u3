@@ -18,6 +18,7 @@
 #include <getopt.h>
 
 #include "slogic.h"
+#include "slogic_regs.h"
 
 enum { FMT_RAW, FMT_U8, FMT_VCD, FMT_CSV };
 
@@ -106,6 +107,7 @@ static void help(void)
            "  -n samples   Samples to capture (default: 1M, 0: until Ctrl-C/-t).\n"
            "  -t seconds   Capture duration (continuous capture).\n"
            "  -p           Counter test pattern instead of the inputs.\n"
+           "  -g           Pattern generator (UART, SPI, PWM, clock, Gray counter) instead of the inputs.\n"
            "  -o file      Output: .vcd, .csv, .u8 (unpacked: 1/2 bytes per sample), else raw packed.\n");
 }
 
@@ -120,14 +122,15 @@ int main(int argc, char **argv)
     char msg[160];
     int c, r;
 
-    while ((c = getopt(argc, argv, "d:r:c:n:t:po:h")) != -1) {
+    while ((c = getopt(argc, argv, "d:r:c:n:t:pgo:h")) != -1) {
         switch (c) {
         case 'd': uri = optarg; break;
         case 'r': cfg.samplerate = parse_rate(optarg); break;
         case 'c': cfg.channels = atoi(optarg); break;
         case 'n': cfg.limit = strtoull(optarg, NULL, 0); break;
         case 't': duration = atof(optarg); cfg.limit = 0; break;
-        case 'p': cfg.pattern = 1; break;
+        case 'p': cfg.pattern = SLOGIC_PATTERN_COUNTER; break;
+        case 'g': cfg.pattern = SLOGIC_PATTERN_GENERATOR; break;
         case 'o': out = optarg; break;
         default:  help(); return 1;
         }

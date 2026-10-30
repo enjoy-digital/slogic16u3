@@ -40,6 +40,7 @@ accuracy). `slogic_util clock` measures the sample clock against the host clock.
 | CRG                          | [crg.py](../gateware/crg.py)               | OSCA, POR, sys PLL, sample PLL + CLKDIV.                              |
 | Sampler                      | [sampler.py](../gateware/sampler.py)       | IDES8 per input: 8 samples per sample clock cycle (Q0 first).         |
 | Capture                      | [capture.py](../gateware/capture.py)       | Test pattern, decimation /N (any N), 4/8/16 channels, 32-bit packer, 64-bit words, limit, overflow. |
+| Pattern Generator            | [generator.py](../gateware/generator.py)   | Capture source 2: UART, SPI, PWM, 100MHz clock, Gray counter at 800MS/s, restarts with each capture. |
 | Analyzer                     | [analyzer.py](../gateware/analyzer.py)     | Capture + CDC (64-bit: 400MB/s needs > 32 bits per sys cycle) + FIFO, info/control/status CSRs, sample clock counter. |
 | USB3 Device                  | [usb3.py](../gateware/usb3.py)             | USB3-PIPE Device Core: EP0 Wishbone bridge, Bulk IN (64-bit).         |
 | Flash                        | [flash.py](../gateware/flash.py)           | SPI master, runtime pads mapping, 512-byte TX/RX buffers.             |
@@ -53,8 +54,15 @@ accuracy). `slogic_util clock` measures the sample clock against the host clock.
 - Wire format: sample-major, first sample on the LSBs (4ch: 2 samples per byte), 64-bit words on the
   Bulk IN endpoint, the last word flushed (padded) with a short packet.
 - Limit (48-bit) or continuous until stopped, overflow (FIFO full: data lost) stops the capture.
-- Counter test pattern: sample i = i x divider (16-bit, masked): end-to-end checks without probes
-  (`slogic_util check`).
+- Test sources, end-to-end checks without probes (`slogic_util check`: every sample checked):
+  - Counter (pattern 1): sample i = i x divider (16-bit, masked).
+  - Pattern generator (pattern 2, gateware >= 1.1): protocol-like signals at the base rate after the
+    deserializers, restarting with each capture, sample i = generator sample i x divider (libslogic
+    `slogic_generator_sample()`, the same model): CH0 UART 1Mbaud 8N1 ("SLogic16U3 LiteX pattern
+    generator\r\n", idle at the capture start), CH1-CH3 SPI mode 0 12.5MHz (CS#/SCK/MOSI, "SLOG" every
+    5.12us), CH4 PWM ~97.7kHz (duty sweep), CH5 100MHz clock, CH6-CH15 10-bit Gray counter at 100MHz.
+    Decodable in sigrok/PulseView (`pattern=generator`). The input pins are not driven (input only
+    standard, probes may be connected): the Sampler/IDES8 path itself is checked with real signals.
 
 ## Registers
 

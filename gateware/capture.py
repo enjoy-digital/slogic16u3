@@ -24,7 +24,9 @@ Pipeline (sample clock domain, one input word of `ratio` samples every cycle):
   `overflow` set (sticky until the next start), the last word flushed with `last`.
 
 Test pattern (pattern=1): 16-bit counter incremented on each sample (sample i of the capture = i), so a
-capture with divider D gives i*D (masked to the channels): end-to-end check without probes.
+capture with divider D gives i*D (masked to the channels): end-to-end check without probes. Pattern
+generator (pattern=2, generator input: gateware/generator.py): protocol-like signals restarting with the
+capture.
 """
 
 from migen import *
@@ -40,8 +42,9 @@ CAPTURE_MODE_8CH  = 1
 CAPTURE_MODE_16CH = 2
 CAPTURE_MODES     = {CAPTURE_MODE_4CH: 4, CAPTURE_MODE_8CH: 8, CAPTURE_MODE_16CH: 16}
 
-CAPTURE_PATTERN_INPUTS  = 0
-CAPTURE_PATTERN_COUNTER = 1
+CAPTURE_PATTERN_INPUTS    = 0
+CAPTURE_PATTERN_COUNTER   = 1
+CAPTURE_PATTERN_GENERATOR = 2
 
 CAPTURE_COUNT_BITS = 48 # Samples counters (~4 days at 800MS/s).
 
@@ -56,7 +59,8 @@ class Capture(LiteXModule):
         self.ratio      = ratio
         self.data_width = data_width
 
-        self.samples = Signal(ratio*nchannels) # i: Samples, first sample on the LSBs.
+        self.samples   = Signal(ratio*nchannels) # i: Samples, first sample on the LSBs.
+        self.generator = Signal(ratio*nchannels) # i: Pattern generator samples (pattern 2), same layout.
         self.source  = source = stream.Endpoint([("data", data_width)])
 
         # Control.
@@ -101,8 +105,9 @@ class Capture(LiteXModule):
             counter.eq(counter_c + ratio),
             Case(self.pattern, {
                 # counter_c is a multiple of ratio: counter_c + i = Cat(i, counter_c[3:]).
-                CAPTURE_PATTERN_COUNTER : s0.eq(Cat(*[Cat(Constant(i, 3), counter_c[3:]) for i in range(ratio)])),
-                "default"               : s0.eq(self.samples),
+                CAPTURE_PATTERN_COUNTER   : s0.eq(Cat(*[Cat(Constant(i, 3), counter_c[3:]) for i in range(ratio)])),
+                CAPTURE_PATTERN_GENERATOR : s0.eq(self.generator),
+                "default"                 : s0.eq(self.samples),
             }),
             s0_start.eq(start),
             s0_run.eq(self.enable),

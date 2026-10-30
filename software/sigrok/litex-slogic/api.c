@@ -59,6 +59,7 @@ static const int32_t trigger_matches[] = {
 static const char *patterns[] = {
 	"inputs",
 	"counter",
+	"generator",
 };
 
 static GSList *scan(struct sr_dev_driver *di, GSList *options)

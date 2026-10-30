@@ -41,7 +41,8 @@ Build and test: `make -C software/user && make -C software/user check` (needs li
 
 ```sh
 slogic_util info                  # Device, gateware, USB3 link, max samplerates.
-slogic_util check                 # Self-test: counter pattern captures, all modes/samplerates, data checked.
+slogic_util check                 # Self-test: counter + pattern generator captures, all modes/samplerates,
+                                  # every sample checked (check [samples] counter|generator|all).
 slogic_util bench 16 200 5        # Throughput: 16 channels at 200MS/s for 5s (overflow reported).
 slogic_util clock                 # Sample clock frequency vs host clock (ppm).
 slogic_util reg 0x800             # Raw register access.
@@ -51,13 +52,14 @@ slogic_util dfu dump backup.bin   # Full Flash backup from the Sipeed DFU loader
 
 slogic_record -r 100M -c 16 -n 1M -o capture.vcd   # VCD/CSV/u8 (unpacked)/raw packed.
 slogic_record -r 800M -c 4 -t 2 -o capture.bin     # Continuous for 2s.
+slogic_record -g -r 100M -c 16 -n 1M -o gen.vcd    # Pattern generator (no probes): UART/SPI/PWM/clock/Gray.
 slogic_util -d sim check                           # Any tool on the simulated device.
 ```
 
 ## sigrok / PulseView
 
 Native libsigrok driver `litex-slogic` ([`software/sigrok/litex-slogic`](../software/sigrok/litex-slogic)), on
-libslogic: samplerates, sample/time limits, soft triggers with capture ratio, counter test pattern, capture
+libslogic: samplerates, sample/time limits, soft triggers with capture ratio, test patterns (counter, generator), capture
 mode (4/8/16 channels) from the highest enabled channel.
 
 ```sh
@@ -66,6 +68,8 @@ export LD_LIBRARY_PATH=$PWD/software/sigrok/install/lib
 software/sigrok/install/bin/sigrok-cli -d litex-slogic --scan
 software/sigrok/install/bin/sigrok-cli -d litex-slogic -c samplerate=100M --samples 1M -P uart:rx=CH0 -A uart
 software/sigrok/install/bin/sigrok-cli -d litex-slogic:conn=sim -c pattern=counter --samples 16 -O hex
+software/sigrok/install/bin/sigrok-cli -d litex-slogic -c samplerate=100M:pattern=generator --samples 200k \
+    -P uart:rx=CH0:baudrate=1000000 -A uart=rx-data     # Pattern generator: the UART text, no probes.
 software/sigrok/install/bin/pulseview -d litex-slogic
 ```
 
@@ -95,7 +99,7 @@ litex_cli --regs                                    # CSRs (build/csr.csv).
 
 | Test                               | What                                                                    |
 |------------------------------------|-------------------------------------------------------------------------|
-| `make -C software/user check`      | libslogic on the simulated device: configurations, captures (data checked), overflow, unpacking, Flash probe/update/region guard (175 checks). |
-| `test/test_sigrok.py`              | sigrok-cli + litex-slogic: scan, counter pattern captures 4/8/16 channels, invalid configurations. |
+| `make -C software/user check`      | libslogic on the simulated device: configurations, captures (data checked), overflow, unpacking, Flash probe/update/region guard, pattern generator decoded (UART/SPI/clock/Gray). |
+| `test/test_sigrok.py`              | sigrok-cli + litex-slogic: scan, counter pattern captures 4/8/16 channels, pattern generator UART/SPI decoded, invalid configurations. |
 | `test/test_scopehal_bridge.py`     | Bridge protocol as libscopehal drives it: identification, free running and triggered waveforms. |
 | `test/test_regs.py`                | slogic_regs.h against the target csr.csv.                                |

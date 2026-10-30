@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 """sigrok: sigrok-cli with the litex-slogic driver on the simulated device (counter pattern data checked
-through the whole libsigrok path). Skipped when software/sigrok/build.sh has not been run."""
+through the whole libsigrok path, pattern generator decoded by libsigrokdecode). Skipped when software/sigrok/build.sh has not been run."""
 
 import os
 import subprocess
@@ -62,6 +62,27 @@ class TestSigrok(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         text = "".join(chr(int(l.split()[-1], 16)) for l in r.stdout.decode().splitlines() if l.strip())
         self.assertIn("Hello from SLogic16U3!", text)
+
+    def decode(self, samplerate, samples, decoder, ann, channels=None):
+        args = ["-c", f"samplerate={samplerate}:pattern=generator", "--samples", str(samples), "-P", decoder,
+            "-A", ann]
+        r = self.run_cli(*(["-C", channels] if channels else []), *args)
+        if b"protocol decoder" in r.stderr.lower() and r.returncode != 0:
+            self.skipTest("sigrok-cli without libsigrokdecode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return [int(l.split()[-1], 16) for l in r.stdout.decode().splitlines() if l.strip()]
+
+    def test_generator_uart(self):
+        # Pattern generator: UART 1Mbaud on CH0, decoded from the first character.
+        data = self.decode("100M", 200000, "uart:rx=CH0:baudrate=1000000", "uart=rx-data")
+        text = "SLogic16U3 LiteX pattern generator\r\n"
+        self.assertEqual("".join(map(chr, data))[:2*len(text)], 2*text)
+
+    def test_generator_spi(self):
+        # Pattern generator: SPI mode 0 on CH1-CH3 ("SLOG" frames), 4 channels at 800MS/s.
+        data = self.decode("800M", 20000, "spi:cs=CH1:clk=CH2:mosi=CH3", "spi=mosi-data", channels="CH0,CH1,CH2,CH3")
+        self.assertGreater(len(data), 8)
+        self.assertEqual(data[:8], [0x53, 0x4c, 0x4f, 0x47]*2)
 
     def test_invalid_config(self):
         r = self.run_cli("-c", "samplerate=400M", "--samples", "10")

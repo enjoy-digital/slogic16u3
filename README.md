@@ -64,7 +64,7 @@ Details: [doc/GATEWARE.md](doc/GATEWARE.md) (clocks, cores, registers, resources
 ```sh
 make -C software/user && make -C software/user check     # libslogic, tools, unit tests.
 software/user/build/slogic_util info
-software/user/build/slogic_util check                    # Self-test (counter pattern, all modes/rates).
+software/user/build/slogic_util check                    # Self-test (counter + pattern generator, all modes/rates).
 software/user/build/slogic_record -r 100M -c 16 -n 1M -o capture.vcd
 
 software/sigrok/build.sh --pulseview                     # libsigrok + litex-slogic, sigrok-cli, PulseView.

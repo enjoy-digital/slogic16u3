@@ -96,7 +96,7 @@ struct slogic_config {
     uint64_t samplerate;       /* Hz: base_rate/divider. */
     unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
     uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
-    unsigned pattern;          /* 0: inputs, 1: counter test pattern. */
+    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator (gateware >= 1.1). */
 };
 
 struct slogic_status {
@@ -133,6 +133,13 @@ uint64_t slogic_packed_bytes(unsigned channels, uint64_t nsamples);
 /* Unpack nsamples samples from packed data (starting at sample index first of data, so streams can be
  * unpacked buffer by buffer) to unitsize bytes per sample. */
 void slogic_unpack(unsigned channels, const uint8_t *data, uint64_t first, uint64_t nsamples, uint8_t *out);
+
+/* Pattern generator (pattern 2, gateware/generator.py), sample t (base sample index from the capture
+ * start, the capture's sample i is t = i*divider): CH0 UART 1Mbaud 8N1 (SLOGIC_GENERATOR_TEXT), CH1-CH3
+ * SPI mode 0 12.5MHz (CS#, SCK, MOSI: "SLOG"), CH4 PWM ~97.7kHz (duty sweep), CH5 100MHz clock, CH6-CH15
+ * 10-bit Gray counter at 100MHz. */
+#define SLOGIC_GENERATOR_TEXT "SLogic16U3 LiteX pattern generator\r\n"
+uint16_t slogic_generator_sample(uint64_t t);
 
 /* Flash (configuration SPI Flash, remote update) */
 /*-----------------------------------------------*/

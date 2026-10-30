@@ -35,10 +35,10 @@ index 024dd4da..97806095 100644
  SR_DRIVER([Link Instruments MSO-19], [link-mso19], [libserialport])
 diff --git a/src/hardware/litex-slogic/api.c b/src/hardware/litex-slogic/api.c
 new file mode 100644
-index 00000000..1b07f7b5
+index 00000000..7a67b534
 --- /dev/null
 +++ b/src/hardware/litex-slogic/api.c
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,317 @@
 +/*
 + * This file is part of the libsigrok project.
 + *
@@ -100,6 +100,7 @@ index 00000000..1b07f7b5
 +static const char *patterns[] = {
 +	"inputs",
 +	"counter",
++	"generator",
 +};
 +
 +static GSList *scan(struct sr_dev_driver *di, GSList *options)
@@ -357,10 +358,10 @@ index 00000000..1b07f7b5
 +SR_REGISTER_DEV_DRIVER(litex_slogic_driver_info);
 diff --git a/src/hardware/litex-slogic/libslogic/slogic.c b/src/hardware/litex-slogic/libslogic/slogic.c
 new file mode 100644
-index 00000000..ad03f9fa
+index 00000000..0c05fcaf
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic/slogic.c
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,456 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic: device, registers, configuration and capture.
@@ -615,8 +616,13 @@ index 00000000..ad03f9fa
 +                 (unsigned long long)slogic_max_samplerate(info, config->channels));
 +        return SLOGIC_ERR_ARG;
 +    }
-+    if (config->pattern > SLOGIC_PATTERN_COUNTER) {
++    if (config->pattern > SLOGIC_PATTERN_GENERATOR) {
 +        snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
++        return SLOGIC_ERR_ARG;
++    }
++    if (config->pattern == SLOGIC_PATTERN_GENERATOR && (info->version & 0xffff) < 1) {
++        snprintf(msg, msg_size, "pattern generator needs gateware >= 1.1 (device: %u.%u)",
++                 info->version >> 16, info->version & 0xffff);
 +        return SLOGIC_ERR_ARG;
 +    }
 +    return SLOGIC_OK;
@@ -764,6 +770,27 @@ index 00000000..ad03f9fa
 +/* Data */
 +/*------*/
 +
++uint16_t slogic_generator_sample(uint64_t t)
++{
++    static const uint8_t spi[4] = { 0x53, 0x4c, 0x4f, 0x47 }; /* "SLOG". */
++    const char    *text = SLOGIC_GENERATOR_TEXT;
++    const uint64_t len  = sizeof(SLOGIC_GENERATOR_TEXT) - 1;
++    uint64_t c = t/8;                     /* Cycle (UART: not wrapped). */
++    uint32_t n = (uint32_t)(c & 0x3ffff); /* 18-bit cycle counter. */
++    unsigned j = t & 7;
++
++    unsigned bit  = (c/100) % 12;
++    uint8_t  ch   = (uint8_t)text[(c/1200) % len];
++    unsigned uart = bit == 2 ? 0 : (bit >= 3 && bit <= 10) ? (ch >> (bit - 3)) & 1 : 1; /* Idle x2, start, data, stop. */
++    unsigned cs_n = (n % 512) >= 256;
++    unsigned sck  = cs_n ? 0 : (n >> 2) & 1;
++    unsigned mosi = cs_n ? 0 : (spi[(n >> 6) & 3] >> (7 - ((n >> 3) & 7))) & 1;
++    unsigned pwm  = (n % 1024) < 4*((n >> 10) % 256);
++    unsigned clk  = j >= 4;
++    unsigned gray = (n & 0x3ff) ^ ((n & 0x3ff) >> 1);
++    return (uint16_t)(uart | cs_n << 1 | sck << 2 | mosi << 3 | pwm << 4 | clk << 5 | gray << 6);
++}
++
 +unsigned slogic_unitsize(unsigned channels)
 +{
 +    return channels > 8 ? 2 : 1;
@@ -793,10 +820,10 @@ index 00000000..ad03f9fa
 +}
 diff --git a/src/hardware/litex-slogic/libslogic/slogic.h b/src/hardware/litex-slogic/libslogic/slogic.h
 new file mode 100644
-index 00000000..a83115b3
+index 00000000..fc12a4d0
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic/slogic.h
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,175 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic: SLogic16U3 (LiteX gateware) host library.
@@ -895,7 +922,7 @@ index 00000000..a83115b3
 +    uint64_t samplerate;       /* Hz: base_rate/divider. */
 +    unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
 +    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
-+    unsigned pattern;          /* 0: inputs, 1: counter test pattern. */
++    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator (gateware >= 1.1). */
 +};
 +
 +struct slogic_status {
@@ -932,6 +959,13 @@ index 00000000..a83115b3
 +/* Unpack nsamples samples from packed data (starting at sample index first of data, so streams can be
 + * unpacked buffer by buffer) to unitsize bytes per sample. */
 +void slogic_unpack(unsigned channels, const uint8_t *data, uint64_t first, uint64_t nsamples, uint8_t *out);
++
++/* Pattern generator (pattern 2, gateware/generator.py), sample t (base sample index from the capture
++ * start, the capture's sample i is t = i*divider): CH0 UART 1Mbaud 8N1 (SLOGIC_GENERATOR_TEXT), CH1-CH3
++ * SPI mode 0 12.5MHz (CS#, SCK, MOSI: "SLOG"), CH4 PWM ~97.7kHz (duty sweep), CH5 100MHz clock, CH6-CH15
++ * 10-bit Gray counter at 100MHz. */
++#define SLOGIC_GENERATOR_TEXT "SLogic16U3 LiteX pattern generator\r\n"
++uint16_t slogic_generator_sample(uint64_t t);
 +
 +/* Flash (configuration SPI Flash, remote update) */
 +/*-----------------------------------------------*/
@@ -1028,10 +1062,10 @@ index 00000000..efde1d4c
 +#endif /* SLOGIC_INTERNAL_H */
 diff --git a/src/hardware/litex-slogic/libslogic/slogic_regs.h b/src/hardware/litex-slogic/libslogic/slogic_regs.h
 new file mode 100644
-index 00000000..fdfd79cc
+index 00000000..e23552b6
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic/slogic_regs.h
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,101 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * SLogic16U3 gateware registers (fixed CSR map, slogic_16u3.py csr_map, checked against the generated
@@ -1098,6 +1132,7 @@ index 00000000..fdfd79cc
 +
 +#define SLOGIC_PATTERN_INPUTS        0
 +#define SLOGIC_PATTERN_COUNTER       1
++#define SLOGIC_PATTERN_GENERATOR     2 /* Gateware >= 1.1. */
 +
 +#define SLOGIC_STATUS_RUNNING        (1 << 0)
 +#define SLOGIC_STATUS_DONE           (1 << 1)
@@ -1134,17 +1169,18 @@ index 00000000..fdfd79cc
 +#endif /* SLOGIC_REGS_H */
 diff --git a/src/hardware/litex-slogic/libslogic/slogic_sim.c b/src/hardware/litex-slogic/libslogic/slogic_sim.c
 new file mode 100644
-index 00000000..7bee7c46
+index 00000000..0f737580
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic/slogic_sim.c
-@@ -0,0 +1,495 @@
+@@ -0,0 +1,498 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic: simulated device (software model of the gateware), for tests and development without
 + * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
 + *
 + * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
-+ * - Capture stream: counter test pattern (sample i = i*divider, as the gateware) or synthetic inputs (CH0:
++ * - Capture stream: counter test pattern (sample i = i*divider, as the gateware), pattern generator
++ *   (slogic_generator_sample(), as the gateware) or synthetic inputs (CH0:
 + *   UART 1Mbaud "Hello from SLogic16U3!", CHn: square wave toggling every 2^(n+2) base samples), packed as
 + *   the gateware (32-bit packer, last word
 + *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
@@ -1172,7 +1208,7 @@ index 00000000..7bee7c46
 +#define SIM_BASE_RATE   800000000ULL
 +#define SIM_SAMPLE_CLK  100000000ULL
 +#define SIM_RATIO       8
-+#define SIM_FIFO_WORDS  512
++#define SIM_FIFO_WORDS  2048
 +#define SIM_BUF_SIZE    (256*1024)
 +#define SIM_FLASH_SIZE  (16*1024*1024)
 +#define SIM_IDENT       "SLogic16U3 LiteX (simulated device)"
@@ -1340,6 +1376,8 @@ index 00000000..7bee7c46
 +    uint64_t t = i*(s->divider ? s->divider : 1); /* Base sample index. */
 +    if (((s->control >> 8) & 3) == SLOGIC_PATTERN_COUNTER)
 +        return (uint16_t)t;
++    if (((s->control >> 8) & 3) == SLOGIC_PATTERN_GENERATOR)
++        return slogic_generator_sample(t);
 +    /* CH0: UART, CHn (n >= 1): square wave toggling every 2^(n+2) base samples. */
 +    return (uint16_t)(((t >> 2) & ~1u) | sim_uart(t));
 +}
@@ -1443,7 +1481,7 @@ index 00000000..7bee7c46
 +    }
 +    switch (addr) {
 +    case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-+    case SLOGIC_ANALYZER_VERSION:   return 0x00010000;
++    case SLOGIC_ANALYZER_VERSION:   return 0x00010001;
 +    case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
 +    case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
 +    case SLOGIC_ANALYZER_CONTROL:   return s->control;
@@ -2125,7 +2163,7 @@ index 00000000..feeb2b09
 +}
 diff --git a/src/hardware/litex-slogic/protocol.h b/src/hardware/litex-slogic/protocol.h
 new file mode 100644
-index 00000000..c0a5ae7c
+index 00000000..13903af9
 --- /dev/null
 +++ b/src/hardware/litex-slogic/protocol.h
 @@ -0,0 +1,67 @@
@@ -2176,7 +2214,7 @@ index 00000000..c0a5ae7c
 +	uint64_t limit_samples;
 +	uint64_t limit_msec;
 +	uint64_t capture_ratio;
-+	int pattern;                   /* 0: inputs, 1: counter test pattern. */
++	int pattern;                   /* 0: inputs, 1: counter test pattern, 2: pattern generator. */
 +
 +	/* Acquisition. */
 +	unsigned channels;             /* Capture mode: 4, 8 or 16 channels. */

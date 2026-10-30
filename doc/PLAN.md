@@ -42,7 +42,7 @@ Host stack (layered, C first):
 | 2  | Gateware cores           | Sampler (IDES8), Capture (pattern/decimation/modes/packer/limit/overflow), Analyzer, Flash; tests.    | Done (sim)        |
 | 3  | SoC                      | CRG, USB3 (PHY + Core + EP0 Wishbone + Bulk IN), fixed CSR map, Gowin build (fit/timings).            | Fit, timings WIP  |
 | 4  | System simulation        | USB3 host model <-> Device Core <-> SoC: CSR accesses and pattern captures over Bulk IN.              | Done (sim)        |
-| 5  | C host stack             | libslogic (USB3/sim transports), slogic_util/slogic_record, DFU loader client, 175 C checks.          | Done (sim)        |
+| 5  | C host stack             | libslogic (USB3/sim transports), slogic_util/slogic_record, DFU loader client, C tests.               | Done (sim)        |
 | 6  | sigrok / PulseView       | litex-slogic libsigrok driver, build script (libsigrok/libsigrokdecode/sigrok-cli/PulseView), tests.  | Done (sim)        |
 | 7  | ngscopeclient            | slogic_scopehal_bridge (TwinLan) + scopehal driver "slogic" (syntax checked), bridge tests.           | Done (sim)        |
 | 8  | Remote update            | Flash pads probe, update with verify (app region only), DFU loader client, recovery docs.             | Done (sim)        |
@@ -116,7 +116,8 @@ pipelining (sample clock), MaxBurst 4.
 - Hardware triggers (edge/pattern/sequence) with pre-trigger in BSRAM, sample-exact trigger position.
 - RLE compression (much longer captures on slow signals over the same USB bandwidth).
 - External clock (state analysis) on CH12 (global clock input), clock qualifier.
-- Pattern generator / output mode on spare channels (the inputs can be driven through the dividers).
+- Output mode on spare channels (the inputs can be driven through the dividers; the internal pattern
+  generator is a capture source only).
 - Frequency counter / timestamps per channel, glitch detection.
 - Trace receiver mode (TPIU/PIB, as slogic16u3-trace), protocol offload (UART/SPI decoders in gateware).
 - USB serial number from the GW5AT DNA (OTP), multiple units.

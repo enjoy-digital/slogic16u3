@@ -148,15 +148,34 @@ static int cmd_clock(void)
     return 0;
 }
 
-/* Self-test: counter pattern captures over all channel modes/samplerates, data checked. */
-static int cmd_check(uint64_t samples)
+/* Expected sample i (16-bit) of a test pattern capture. */
+static uint16_t check_expected(unsigned pattern, uint64_t i, uint64_t divider)
+{
+    if (pattern == SLOGIC_PATTERN_GENERATOR)
+        return slogic_generator_sample(i*divider);
+    return (uint16_t)(i*divider);
+}
+
+/* Self-test: test pattern captures (counter and/or pattern generator) over all channel
+   modes/samplerates, every sample checked. */
+static int cmd_check(uint64_t samples, const char *which)
 {
     struct slogic_dev *dev = open_dev();
     struct slogic_info info;
     uint64_t rates[64];
+    unsigned patterns[2], npatterns = 0;
     int failures = 0, tests = 0;
 
+    if (!strcmp(which, "counter") || !strcmp(which, "all"))
+        patterns[npatterns++] = SLOGIC_PATTERN_COUNTER;
+    if (!strcmp(which, "generator") || !strcmp(which, "all"))
+        patterns[npatterns++] = SLOGIC_PATTERN_GENERATOR;
+    if (!npatterns) {
+        fprintf(stderr, "check: unknown pattern %s (counter, generator, all)\n", which);
+        return 1;
+    }
     slogic_get_info(dev, &info);
+    for (unsigned p = 0; p < npatterns; p++)
     for (unsigned ch = 4; ch <= 16; ch *= 2) {
         int n = slogic_samplerates(&info, ch, rates, 64);
         for (int i = 0; i < n; i++) {
@@ -167,7 +186,7 @@ static int cmd_check(uint64_t samples)
                 n = rates[i]/10 > 1000 ? rates[i]/10 : 1000;
             int timeout_ms = 2000 + (int)(2000*n/rates[i]);
             struct slogic_config c = { .channels = ch, .samplerate = rates[i], .limit = n,
-                                       .pattern = SLOGIC_PATTERN_COUNTER };
+                                       .pattern = patterns[p] };
             uint64_t divider = info.base_rate/rates[i], bad = 0, got = 0;
             unsigned unit = slogic_unitsize(ch);
             uint8_t *s = malloc(slogic_packed_bytes(ch, n) + 16), *u = malloc(n*unit);
@@ -187,12 +206,12 @@ static int cmd_check(uint64_t samples)
             slogic_unpack(ch, s, 0, got, u);
             for (uint64_t k = 0; k < got; k++) {
                 uint32_t v = unit == 2 ? (uint32_t)(u[2*k] | u[2*k + 1] << 8) : u[k];
-                bad += v != ((k*divider) & 0xffff & ((1u << ch) - 1));
+                bad += v != (check_expected(patterns[p], k, divider) & ((1u << ch) - 1));
             }
             struct slogic_status st;
             slogic_capture_stop(dev, &st);
             int ok = (r == SLOGIC_ERR_END) && got == n && !bad && !st.overflow;
-            printf("%2u ch ", ch);
+            printf("%-9s %2u ch ", patterns[p] == SLOGIC_PATTERN_GENERATOR ? "generator" : "counter", ch);
             print_rate("@ ", rates[i]);
             printf(": %s (%llu samples, %llu errors%s)\n", ok ? "OK" : "FAIL", (unsigned long long)got,
                    (unsigned long long)bad, st.overflow ? ", overflow" : "");
@@ -327,7 +346,8 @@ static void help(void)
            "  status               Capture status.\n"
            "  reg <addr> [val]     Read/write a 32-bit register.\n"
            "  clock                Sample clock frequency (vs host clock).\n"
-           "  check [samples]      Self-test: counter pattern captures, all modes/samplerates.\n"
+           "  check [samples] [counter|generator|all]\n"
+           "                       Self-test: test pattern captures, all modes/samplerates.\n"
            "  bench [ch] [MHz] [s] Throughput (continuous capture).\n"
            "  flash probe          Flash pads mapping probe, JEDEC ID.\n"
            "  flash read <f> <a> <n>  Read Flash to a file.\n"
@@ -355,7 +375,8 @@ int main(int argc, char **argv)
     if (!strcmp(argv[0], "status")) return cmd_status();
     if (!strcmp(argv[0], "reg"))    return cmd_reg(argc - 1, argv + 1);
     if (!strcmp(argv[0], "clock"))  return cmd_clock();
-    if (!strcmp(argv[0], "check"))  return cmd_check(argc > 1 ? strtoull(argv[1], NULL, 0) : 100000);
+    if (!strcmp(argv[0], "check"))  return cmd_check(argc > 1 ? strtoull(argv[1], NULL, 0) : 100000,
+                                                     argc > 2 ? argv[2] : "all");
     if (!strcmp(argv[0], "bench"))
         return cmd_bench(argc > 1 ? atoi(argv[1]) : 16, (uint64_t)((argc > 2 ? atof(argv[2]) : 100)*1e6),
                          argc > 3 ? atof(argv[3]) : 5.0);

@@ -180,6 +180,80 @@ static void test_capture_patterns(void)
     slogic_close(dev);
 }
 
+/* Pattern generator: the signals decoded from a 16ch@100MHz capture (1 sample per 100MHz cycle). */
+static void test_generator(void)
+{
+    struct slogic_dev *dev = open_sim("sim:fast");
+    struct slogic_config c = { .channels = 16, .samplerate = 100000000, .limit = 200000,
+                               .pattern = SLOGIC_PATTERN_GENERATOR };
+    struct slogic_status st;
+    size_t size = 0;
+    int err;
+    uint8_t *data = capture(dev, &c, &size, &err);
+    uint16_t *v = malloc(c.limit*2);
+    CHECK(err == SLOGIC_OK);
+    CHECK_OK(slogic_capture_stop(dev, &st));
+    slogic_unpack(16, data, 0, c.limit, (uint8_t *)v);
+
+    /* Model: every sample. */
+    uint64_t bad = 0;
+    for (uint64_t i = 0; i < c.limit; i++)
+        bad += v[i] != slogic_generator_sample(8*i);
+    CHECK(bad == 0);
+
+    /* CH0: UART 1Mbaud (100 samples per bit), sampled mid-bit from each start bit. */
+    char text[64] = { 0 };
+    size_t nt = 0;
+    unsigned bad_stop = 0;
+    CHECK(v[0] & 1); /* Idle at the capture start. */
+    for (uint64_t i = 1; i + 1000 < c.limit && nt < sizeof(text) - 1; i++) {
+        if ((v[i - 1] & 1) && !(v[i] & 1)) {
+            uint8_t ch = 0;
+            for (int b = 0; b < 8; b++)
+                ch |= (v[i + 150 + 100*b] & 1) << b;
+            bad_stop += !(v[i + 950] & 1); /* Stop bit. */
+            text[nt++] = (char)ch;
+            i += 950;
+        }
+    }
+    CHECK(bad_stop == 0);
+    CHECK(!strncmp(text, SLOGIC_GENERATOR_TEXT, strlen(SLOGIC_GENERATOR_TEXT)));
+
+    /* CH1-CH3: SPI mode 0 (MOSI sampled on SCK rising edges while CS# low): "SLOG" frames. */
+    unsigned frames = 0, nbits = 0, bad_frames = 0;
+    uint32_t word = 0;
+    for (uint64_t i = 1; i < c.limit; i++) {
+        unsigned cs = (v[i] >> 1) & 1, sck = (v[i] >> 2) & 1, sck0 = (v[i - 1] >> 2) & 1;
+        if (!cs && sck && !sck0) {
+            word = word << 1 | ((v[i] >> 3) & 1);
+            nbits++;
+        }
+        if (cs && !((v[i - 1] >> 1) & 1)) { /* CS# rising: end of frame. */
+            bad_frames += !(nbits == 32 && word == 0x534c4f47);
+            frames++;
+            nbits = 0;
+            word  = 0;
+        }
+    }
+    CHECK(frames > 300);
+    CHECK(bad_frames == 0);
+
+    /* CH5: 100MHz clock sampled at 100MHz (samples 0, 8, ...: low). CH6-CH15: Gray counter, +1 per cycle. */
+    uint64_t bad_clk = 0, bad_gray = 0;
+    for (uint64_t i = 1; i < c.limit; i++) {
+        unsigned b0 = 0, b1 = 0;
+        for (unsigned g = v[i - 1] >> 6; g; g >>= 1) b0 ^= g; /* Gray to binary. */
+        for (unsigned g = v[i] >> 6; g; g >>= 1) b1 ^= g;
+        bad_clk  += (v[i] >> 5) & 1;
+        bad_gray += b1 != ((b0 + 1) & 0x3ff);
+    }
+    CHECK(bad_clk == 0);
+    CHECK(bad_gray == 0);
+    free(v);
+    free(data);
+    slogic_close(dev);
+}
+
 static void test_continuous_stop(void)
 {
     struct slogic_dev *dev = open_sim("sim:fast");
@@ -277,6 +351,7 @@ int main(void)
     test_info();
     test_config();
     test_capture_patterns();
+    test_generator();
     test_continuous_stop();
     test_overflow();
     test_unpack();

@@ -131,9 +131,9 @@
   <div class="scene" id="tests"><h2>Tested <span class="x">on models, then on the board</span>.</h2>
     <div class="lede">Every layer runs against models first: gateware in simulation, host stack on a simulated device.</div>
     <div class="list" id="testlist" style="left:4.7vw; top:27vh;">
-      <div class="it"><span class="ck">✓</span><b>Migen unit tests</b><span>capture (dividers/modes/limits/overflow), flash core with a SPI Flash model</span></div>
+      <div class="it"><span class="ck">✓</span><b>Migen unit tests</b><span>capture (dividers/modes/limits/overflow), pattern generator, flash core with a SPI Flash model</span></div>
       <div class="it"><span class="ck">✓</span><b>USB3 system simulation</b><span>USB3-PIPE host model ↔ Device Core ↔ SoC: CSRs over EP0, captures over Bulk IN</span></div>
-      <div class="it"><span class="ck">✓</span><b>libslogic</b><span>175 checks on the simulated device: captures, unpacking, flash update guards</span></div>
+      <div class="it"><span class="ck">✓</span><b>libslogic</b><span>186 checks on the simulated device: captures, pattern generator decoded, flash update guards</span></div>
       <div class="it"><span class="ck">✓</span><b>sigrok-cli · ngscopeclient bridge</b><span>end-to-end on the simulated device</span></div>
       <div class="it"><span class="ck">✓</span><b>Gowin build</b><span>GW5AT-15 bitstream: USB3 + capture + flash</span></div>
       <div class="it"><span class="ck">✓</span><b>on the SLogic16U3</b><span>USB3 at 5 Gb/s · self-test 99/99 · 400 MB/s sustained</span></div>

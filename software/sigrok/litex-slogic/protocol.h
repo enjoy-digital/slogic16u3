@@ -45,7 +45,7 @@ struct dev_context {
 	uint64_t limit_samples;
 	uint64_t limit_msec;
 	uint64_t capture_ratio;
-	int pattern;                   /* 0: inputs, 1: counter test pattern. */
+	int pattern;                   /* 0: inputs, 1: counter test pattern, 2: pattern generator. */
 
 	/* Acquisition. */
 	unsigned channels;             /* Capture mode: 4, 8 or 16 channels. */
