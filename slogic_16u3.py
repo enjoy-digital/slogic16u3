@@ -227,19 +227,14 @@ class SLogicSoC(SLogicBaseSoC):
 
 # Gowin Workaround ---------------------------------------------------------------------------------
 
-def gowin_distributed_memories(platform, max_depth=64, exclude=None, include=None):
+def gowin_distributed_memories(platform, max_depth=64):
     """Memories mapped to distributed RAMs (syn_ramstyle attribute added to the generated Verilog
-    before the Gowin project is created):
-    - Initialized memories (identifier, USB3 descriptors: small, BSRAMs kept for the buffers; Gowin
-      1.9.10 also rejects initialized BSRAMs on the GW5AT-15A: PA2128).
-    - Shallow memories (depth <= max_depth: FIFOs, CDCs): the 35 BSRAMs (half used per inferred
-      SDPB/SDPX9B) are kept for the deep buffers (USB3 packets slots, capture FIFO).
-    exclude/include: regular expressions on the memory write port signals (Gowin mapping kept/
-    distributed RAM forced, debug).
-
-    Memories with an asynchronous read port (read address not registered by the memory) left to the
-    Gowin mapping are rejected: Gowin implements them in BSRAMs without error but with a different
-    behavior (hardware: USB3 DPP RX adapter FIFO data read back as zeros)."""
+    before the Gowin project is created), the 35 BSRAMs (half used per inferred SDPB/SDPX9B) being kept
+    for the deep buffers (USB3 packets slots, capture FIFO):
+    - Initialized memories (identifier, USB3 descriptors: small; Gowin 1.9.10 also rejects initialized
+      BSRAMs on the GW5AT-15A: PA2128).
+    - Shallow memories (depth <= max_depth: FIFOs, CDCs).
+    Memories with an asynchronous read port are mapped to distributed RAMs by LiteX (Gowin toolchain)."""
     toolchain     = platform.toolchain
     build_project = toolchain.build_project
     attr          = ' /* synthesis syn_ramstyle = "distributed_ram" */'
@@ -248,21 +243,11 @@ def gowin_distributed_memories(platform, max_depth=64, exclude=None, include=Non
         v      = open(v_file).read()
         v      = re.sub(r"(reg \[\d+:0\] (\w+)\[0:\d+\]);(\s*initial begin\s*\$readmemh\(\"[^\"]+\", \2\);)",
             r"\1" + attr + r";\3", v)
-        def matches(name, regex):
-            w = re.search(rf"\b{name}\[(\w+)\] <= ", v)
-            return (regex is not None) and (w is not None) and (re.search(regex, w.group(1)) is not None)
         def shallow(m):
-            if ("syn_ramstyle" in m.group(0)) or matches(m.group(2), exclude):
-                return m.group(0)
-            if (int(m.group(3)) + 1 > max_depth) and not matches(m.group(2), include):
+            if ("syn_ramstyle" in m.group(0)) or (int(m.group(2)) + 1 > max_depth):
                 return m.group(0)
             return m.group(1) + attr + ";"
-        v      = re.sub(r"(reg \[\d+:0\] (\w+)\[0:(\d+)\])[^;\n]*;", shallow, v)
-        for m in re.finditer(r"reg \[\d+:0\] (\w+)\[0:\d+\]([^;\n]*);", v):
-            name = m.group(1)
-            for adr in re.findall(rf"assign \w+ = {name}\[(\w+)\];", v):
-                if not re.fullmatch(rf"{name}_adr\d+", adr) and ("distributed_ram" not in m.group(2)):
-                    raise ValueError(f"Memory {name}: asynchronous read ({adr}) not on distributed RAM.")
+        v      = re.sub(r"(reg \[\d+:0\] \w+\[0:(\d+)\])[^;\n]*;", shallow, v)
         open(v_file, "w").write(v)
         build_project()
     toolchain.build_project = _build_project
@@ -284,8 +269,6 @@ def main():
     parser.add_argument("--no-analyzer",       action="store_true",     help="Build without the Analyzer (USB3 bring-up).")
     parser.add_argument("--no-flash",          action="store_true",     help="Build without the Flash core.")
     parser.add_argument("--no-memory-hook",    action="store_true",     help="Memories mapping left to Gowin (no gowin_distributed_memories).")
-    parser.add_argument("--memory-hook-exclude", default=None,          help="Memories kept on the Gowin mapping (write port signals regex).")
-    parser.add_argument("--memory-hook-include", default=None,          help="Memories forced to distributed RAM (write port signals regex).")
     parser.add_argument("--with-jtagbone",     action="store_true",     help="Enable JTAGBone (CSRs over JTAG).")
     parser.add_argument("--with-usb3-debug",   action="store_true",     help="Enable USB3 bring-up debug CSRs.")
     parser.add_argument("--with-usb3-counters", action="store_true",    help="Enable USB3 Bulk IN throughput counters CSRs.")
@@ -302,7 +285,7 @@ def main():
     platform.toolchain.options["route_option"]        = args.route_option
     platform.toolchain.options["replicate_resources"] = args.replicate_resources
     if not args.no_memory_hook:
-        gowin_distributed_memories(platform, exclude=args.memory_hook_exclude, include=args.memory_hook_include)
+        gowin_distributed_memories(platform)
 
     soc = SLogicSoC(platform,
         sys_clk_freq       = args.sys_clk_freq,

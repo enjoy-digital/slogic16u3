@@ -72,7 +72,8 @@ pipelining (sample clock), MaxBurst 4.
    - CDR/QPLL0 settings from Gowin's USB 3.0 PHY IP configuration (USB3-PIPE `GW5AT15_Q0_QPLL0_OVERRIDES`, `usb3_pipe/gw5`): with the
      serdes_toml_to_csr CDR value, RX 8b/10b errors prevent the training (Polling.Idle timeouts).
    - USB3-PIPE DPP RX adapter FIFO (asynchronous RAM read) mis-implemented by Gowin in block RAMs (EP0 Setups
-     read back as zeros): FIFO buffered in USB3-PIPE, build check in `gowin_distributed_memories`.
+     read back as zeros): FIFO buffered in USB3-PIPE, such memories mapped to distributed RAM by LiteX (Gowin
+     toolchain).
    - Bring-up debug: `--with-jtagbone --with-usb3-debug` (LTSSM history, GTR12 status/UPAR, link statistics,
      Data Packets rings) over the JTAG port, `software/debug/usb3_debug.py`.
 2. **Done** (full bitstream over JTAG): `slogic_util check` 99/99 (counter pattern, all modes, 1kHz to 400MB/s,

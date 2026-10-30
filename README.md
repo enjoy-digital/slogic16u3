@@ -84,9 +84,8 @@ Add `-d sim` (tools) or `conn=sim` (sigrok) to run on the simulated device. Deta
 ### Requirements
 
 - Gowin IDE (`gw_sh` in the `PATH`): 1.9.12.04 (GW5AT-15 device version B); 1.9.10 with `--device-version A`.
-- LiteX, Migen, LiteX-Boards, LiteICLink, USB3-PIPE (`litex_setup.py --init --install`), the not yet merged
-  branches: `source scripts/env.sh` (LiteX-Boards `sipeed_slogic16u3`, LiteICLink `serdes/gtr12-gw5at`,
-  USB3-PIPE `gw5/gw5at-15`).
+- LiteX, Migen, LiteX-Boards, LiteICLink, USB3-PIPE (`litex_setup.py --init --install`, upstream master: the
+  SLogic16U3 platform, GW5AT-15 GTR12 and USB3 support are merged).
 - Host: libusb-1.0 (C tools), autotools/glib/libzip (libsigrok), Qt5/Boost (PulseView), Python 3 + pytest (tests).
 - USB access: `sudo cp software/udev/99-slogic16u3.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules`.
 
