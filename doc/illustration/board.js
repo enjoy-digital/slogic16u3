@@ -1,12 +1,11 @@
 // Procedural 3D model of the Sipeed SLogic16U3, after the product photos: black anodized aluminum case
-// (bottom tray + lid, diamond cut chamfers, "5Gbps / SLogic" logo), 2x10 female header (CH0-CH15, GND,
-// CK) on the front, USB-C, LED and MODE button on the back, and the board inside: black soldermask with
+// (a single sleeve sliding over the board, "5Gbps / SLogic" logo, and two end caps), 2x10 female header
+// (CH0-CH15, GND, CK) in the front cap, USB-C, LED and MODE button in the back cap, and the board inside: black soldermask with
 // yellow edges, Gowin GW5AT-15 (MBGA132), VL162 Type-C mux (QFN), SPI Flash, 125MHz oscillator, 8-pin JST
 // SH JTAG/UART connector (5V/GND) on the left edge, input dividers arrays and the right angle header legs,
 // "SLogic 16 U3" / SIPEED silkscreen. Board layout from a perspective corrected top photo (board
 // coordinates u: left to right, v: back/USB-C to front/header). 1 world unit = 10 mm.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 export const SIZE = 4.0, HEIGHT = 1.0;
 const BS = 3.7, BT = 0.08;   // board size/thickness
@@ -165,59 +164,79 @@ export function buildDevice() {
 
   const alu = new THREE.MeshPhysicalMaterial({ color: 0x0c0d0f, metalness: 0.25, roughness: 0.72, clearcoat: 0.05, clearcoatRoughness: 0.6 });
   alu.envMapIntensity = 0.35;   // deep black anodized (studio reflections kept subtle)
-  const aluDark = new THREE.MeshStandardMaterial({ color: 0x0a0b0c, metalness: 0.6, roughness: 0.5 });
 
-  // Case: bottom tray + lid (black anodized, diamond cut chamfers on the outer edges).
-  const tray = new THREE.Mesh(new RoundedBoxGeometry(SIZE, 0.55, SIZE, 6, 0.08), alu);
-  tray.position.y = 0.275; tray.castShadow = tray.receiveShadow = true; root.add(tray);
-  const lid = new THREE.Group(); root.add(lid);
-  const lidMat = alu.clone(); lidMat.transparent = true;
-  const lidMesh = new THREE.Mesh(new RoundedBoxGeometry(SIZE, 0.45, SIZE, 6, 0.08), lidMat);
-  lidMesh.position.y = 0.775; lidMesh.castShadow = true; lid.add(lidMesh);
+  // Case: a single extruded sleeve sliding over the board (logo on top) and two end caps: front (2x10
+  // header opening, pin labels) and back (USB-C, LED, MODE button).
+  const L = SIZE - 0.2, CT = 0.1, R = 0.12, WT = 0.08; // Sleeve length, caps/walls thicknesses.
+  const rrect = (path, x0, y0, x1, y1, r) => {
+    path.moveTo(x0 + r, y0); path.lineTo(x1 - r, y0); path.quadraticCurveTo(x1, y0, x1, y0 + r);
+    path.lineTo(x1, y1 - r); path.quadraticCurveTo(x1, y1, x1 - r, y1); path.lineTo(x0 + r, y1);
+    path.quadraticCurveTo(x0, y1, x0, y1 - r); path.lineTo(x0, y0 + r); path.quadraticCurveTo(x0, y0, x0 + r, y0);
+    return path;
+  };
+  const stadium = (path, cx, cy, w, h) => {
+    const r = h / 2;
+    path.absarc(cx - w / 2 + r, cy, r, Math.PI / 2, 3 * Math.PI / 2);
+    path.absarc(cx + w / 2 - r, cy, r, -Math.PI / 2, Math.PI / 2);
+    return path;
+  };
+  const circle = (path, cx, cy, r) => { path.absarc(cx, cy, r, 0, 2 * Math.PI, true); return path; };
+  const caseMat = () => { const m = alu.clone(); m.transparent = true; return m; };
+  const caseMats = [];
+
+  const sleeve = new THREE.Group(); root.add(sleeve);
+  const sleeveMat = caseMat(); caseMats.push(sleeveMat);
+  const profile = rrect(new THREE.Shape(), -SIZE / 2, 0, SIZE / 2, HEIGHT, R);
+  profile.holes.push(rrect(new THREE.Path(), -SIZE / 2 + WT, WT, SIZE / 2 - WT, HEIGHT - WT, R / 2));
+  const tube = new THREE.Mesh(new THREE.ExtrudeGeometry(profile, { depth: L, bevelEnabled: false, curveSegments: 8 }), sleeveMat);
+  tube.position.z = -L / 2; tube.castShadow = tube.receiveShadow = true; sleeve.add(tube);
   const labelMat = new THREE.MeshBasicMaterial({ map: labelTexture(), transparent: true, depthWrite: false });
-  const label = new THREE.Mesh(new THREE.PlaneGeometry(SIZE * 0.985, SIZE * 0.985), labelMat);
-  label.rotation.x = -Math.PI / 2; label.position.y = HEIGHT + 0.002; lid.add(label);
-  const seam = new THREE.Mesh(new THREE.BoxGeometry(SIZE * 1.002, 0.01, SIZE * 1.002), aluDark);
-  seam.position.y = 0.552; root.add(seam);
+  caseMats.push(labelMat);
+  const label = new THREE.Mesh(new THREE.PlaneGeometry(SIZE - 2 * R, L), labelMat);
+  label.rotation.x = -Math.PI / 2; label.position.y = HEIGHT + 0.002; sleeve.add(label);
 
-  // Front: female header face (flush in the case opening) and the pin labels.
-  const hdr = new THREE.Group(); root.add(hdr);
-  const hdrMat = new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.75 });
-  const hw = 0.82 * BS, hx = (0.47 - 0.5) * BS;
+  const hdrMat  = new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.75 });
   const faceMat = new THREE.MeshStandardMaterial({ map: headerFaceTexture(), roughness: 0.8 });
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(hw, 0.36, 0.06), [hdrMat, hdrMat, hdrMat, hdrMat, faceMat, hdrMat]);
-  housing.position.set(hx, 0.69, SIZE / 2 + 0.005); hdr.add(housing);
-  const lblTop = new THREE.Mesh(new THREE.PlaneGeometry(hw, hw / 16), new THREE.MeshBasicMaterial({ map: pinLabelsTexture(['CK', 'G', '15', '13', '11', '9', '7', '5', '3', '1']), transparent: true, depthWrite: false }));
-  lblTop.position.set(hx, 0.93, SIZE / 2 + 0.004); hdr.add(lblTop);
-  const lblBot = new THREE.Mesh(new THREE.PlaneGeometry(hw, hw / 16), new THREE.MeshBasicMaterial({ map: pinLabelsTexture(['CK', 'G', '14', '12', '10', '8', '6', '4', '2', '0']), transparent: true, depthWrite: false }));
-  lblBot.position.set(hx, 0.44, SIZE / 2 + 0.004); hdr.add(lblBot);
+  const hw = 0.82 * BS, hx = (0.47 - 0.5) * BS;
+  const ux = (0.47 - 0.5) * BS, uy = 0.62;
+  const ledX = (0.05 - 0.5) * BS, modeX = (0.156 - 0.5) * BS;
+
+  // Front cap: header opening, pin labels.
+  const capF = new THREE.Group(); root.add(capF);
+  const capFMat = caseMat(); caseMats.push(capFMat);
+  const front = rrect(new THREE.Shape(), -SIZE / 2, 0, SIZE / 2, HEIGHT, R);
+  front.holes.push(rrect(new THREE.Path(), hx - hw / 2 - 0.03, 0.48, hx + hw / 2 + 0.03, 0.90, 0.02));
+  const capFMesh = new THREE.Mesh(new THREE.ExtrudeGeometry(front, { depth: CT, bevelEnabled: false }), capFMat);
+  capFMesh.position.z = L / 2; capFMesh.castShadow = true; capF.add(capFMesh);
+  for (const [labels, y] of [[['CK', 'G', '15', '13', '11', '9', '7', '5', '3', '1'], 0.95],
+                             [['CK', 'G', '14', '12', '10', '8', '6', '4', '2', '0'], 0.42]]) {
+    const m = new THREE.MeshBasicMaterial({ map: pinLabelsTexture(labels), transparent: true, depthWrite: false });
+    caseMats.push(m);
+    const l = new THREE.Mesh(new THREE.PlaneGeometry(hw, hw / 16), m);
+    l.position.set(hx, y, SIZE / 2 + 0.003); capF.add(l);
+  }
   anchors.header = new THREE.Vector3(hx - 0.8, 0.7, SIZE / 2 + 0.05);
 
-  // Back: USB-C (stadium shell), LED, MODE button.
+  // Back cap: USB-C, LED (light pipe), MODE button.
+  const capB = new THREE.Group(); root.add(capB);
+  const capBMat = caseMat(); caseMats.push(capBMat);
+  const back = rrect(new THREE.Shape(), -SIZE / 2, 0, SIZE / 2, HEIGHT, R);
+  back.holes.push(stadium(new THREE.Path(), ux, uy, 1.0, 0.42));
+  back.holes.push(circle(new THREE.Path(), ledX, uy, 0.07));
+  back.holes.push(circle(new THREE.Path(), modeX, uy, 0.11));
+  const capBMesh = new THREE.Mesh(new THREE.ExtrudeGeometry(back, { depth: CT, bevelEnabled: false }), capBMat);
+  capBMesh.position.z = -SIZE / 2; capBMesh.castShadow = true; capB.add(capBMesh);
   const shellMat = new THREE.MeshStandardMaterial({ color: 0xc9ccd2, metalness: 0.9, roughness: 0.38 });
-  const ux = (0.47 - 0.5) * BS;
-  const shape = new THREE.Shape(); const uw = 0.9, uh = 0.32, ur = uh / 2;
-  shape.absarc(-uw / 2 + ur, 0, ur, Math.PI / 2, 3 * Math.PI / 2); shape.absarc(uw / 2 - ur, 0, ur, -Math.PI / 2, Math.PI / 2);
-  const hole = new THREE.Path(); const iw = uw - 0.06, ir = (uh - 0.06) / 2;
-  hole.absarc(-iw / 2 + ir, 0, ir, Math.PI / 2, 3 * Math.PI / 2); hole.absarc(iw / 2 - ir, 0, ir, -Math.PI / 2, Math.PI / 2);
-  shape.holes.push(hole);
-  const shell = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 0.08, bevelEnabled: false }), shellMat);
-  shell.position.set(ux, 0.66, -SIZE / 2 - 0.06); shell.rotation.y = Math.PI; root.add(shell);
-  const cavity = new THREE.Mesh(new THREE.BoxGeometry(uw - 0.08, uh - 0.08, 0.05), new THREE.MeshBasicMaterial({ color: 0x050506 }));
-  cavity.position.set(ux, 0.66, -SIZE / 2 - 0.01); root.add(cavity);
-  const tongue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.06), new THREE.MeshStandardMaterial({ color: 0x1a1c20 }));
-  tongue.position.set(ux, 0.66, -SIZE / 2 - 0.03); root.add(tongue);
-  anchors.usb = new THREE.Vector3(ux, 0.66, -SIZE / 2 - 0.1);
-  const ledX = (0.05 - 0.5) * BS, modeX = (0.156 - 0.5) * BS;
+  anchors.usb = new THREE.Vector3(ux, uy, -SIZE / 2 - 0.1);
   const ledMat = new THREE.MeshBasicMaterial({ color: 0xff3838 });
-  const led = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 20), ledMat);
-  led.rotation.x = Math.PI / 2; led.position.set(ledX, 0.62, -SIZE / 2 - 0.012); root.add(led);
+  const led = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, CT, 20), ledMat);
+  led.rotation.x = Math.PI / 2; led.position.set(ledX, uy, -SIZE / 2 + CT / 2 - 0.004); capB.add(led);
   const ledGlow = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24), new THREE.MeshBasicMaterial({ color: 0xff3838, transparent: true, opacity: 0.35, depthWrite: false }));
-  ledGlow.rotation.y = Math.PI; ledGlow.position.set(ledX, 0.62, -SIZE / 2 - 0.03); root.add(ledGlow);
-  anchors.led = new THREE.Vector3(ledX, 0.62, -SIZE / 2 - 0.05);
-  const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.06, 24), shellMat);
-  btn.rotation.x = Math.PI / 2; btn.position.set(modeX, 0.62, -SIZE / 2 - 0.02); root.add(btn);
-  anchors.mode = new THREE.Vector3(modeX, 0.62, -SIZE / 2 - 0.05);
+  ledGlow.rotation.y = Math.PI; ledGlow.position.set(ledX, uy, -SIZE / 2 - 0.02); capB.add(ledGlow);
+  anchors.led = new THREE.Vector3(ledX, uy, -SIZE / 2 - 0.05);
+  const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, CT + 0.04, 24), shellMat);
+  btn.rotation.x = Math.PI / 2; btn.position.set(modeX, uy, -SIZE / 2 + CT / 2 - 0.02); capB.add(btn);
+  anchors.mode = new THREE.Vector3(modeX, uy, -SIZE / 2 - 0.05);
 
   // Board (inside).
   const pcb = new THREE.Group(); pcb.position.y = 0.42; root.add(pcb);
@@ -241,6 +260,11 @@ export function buildDevice() {
   // USB-C receptacle (mid-mount, back edge) and the side MODE switch.
   const rec = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.32, 0.75), shellMat);
   rec.position.copy(P(0.47, 0.07, 0.12)); pcb.add(rec);
+  const recZ = P(0.47, 0.07).z - 0.375; // Receptacle front (in the back cap opening).
+  const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.24, 0.02), new THREE.MeshBasicMaterial({ color: 0x050506 }));
+  cavity.position.set(P(0.47, 0).x, BT + 0.12, recZ - 0.001); pcb.add(cavity);
+  const tongue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.06), new THREE.MeshStandardMaterial({ color: 0x1a1c20 }));
+  tongue.position.set(P(0.47, 0).x, BT + 0.12, recZ + 0.02); pcb.add(tongue);
   const sw = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.22), shellMat);
   sw.position.copy(P(0.156, 0.04, 0.1)); pcb.add(sw);
   const ledPkg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.1), new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.4 }));
@@ -293,5 +317,5 @@ export function buildDevice() {
   const path = new THREE.CatmullRomCurve3([P(0.47, 0.93), P(0.47, 0.70), P(0.6, 0.52), P(0.665, 0.40), P(0.45, 0.37),
     P(0.31, 0.35), P(0.38, 0.2), P(0.47, 0.08)].map(v => v.add(new THREE.Vector3(0, 0.11, 0))));
 
-  return { root, lid, lidMat, labelMat, pcb, hdr, led, ledMat, ledGlow, anchors, path };
+  return { root, sleeve, capF, capB, caseMats, pcb, led, ledMat, ledGlow, anchors, path };
 }

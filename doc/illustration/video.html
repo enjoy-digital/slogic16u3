@@ -13,7 +13,8 @@
   svg#hud { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
   svg#hud .ln { fill: none; stroke: var(--acc); stroke-width: 0.09vw; }
   svg#hud circle { fill: var(--bg); stroke: var(--acc); stroke-width: 0.1vw; }
-  .tag { position: absolute; font-family: 'Ubuntu Mono', monospace; white-space: nowrap; line-height: 1.3; }
+  .tag { position: absolute; font-family: 'Ubuntu Mono', monospace; white-space: nowrap; line-height: 1.3;
+    background: rgba(8,9,11,0.86); padding: 0.35vw 0.6vw; border-radius: 0.2vw; }
   .tag .t { font-size: 1.05vw; letter-spacing: 0.08em; color: var(--ink); }
   .tag .s { font-size: 0.92vw; letter-spacing: 0.03em; color: var(--dim); }
   #caption { left: 3.4vw; bottom: 6vh; font-family: 'Ubuntu Mono', monospace; font-size: 1.05vw; letter-spacing: 0.2em; text-transform: uppercase; }
@@ -94,24 +95,24 @@
     <div class="o" id="diagstep"></div></div>
 
   <div class="scene" id="cap"><h2>Capture, <span class="x">at 800 MS/s</span>.</h2>
-    <div class="lede">IDES8 deserializers: 8 samples per cycle at 100 MHz. Decimation by N, 4/8/16 channel modes, streamed over Bulk IN.</div>
+    <div class="lede">IDES8 deserializers: 8 samples per cycle at 100 MHz. Decimation by N, 4/8/16 channel modes, streamed over Bulk IN. Tested on hardware: 400 MB/s sustained, every sample checked.</div>
     <canvas class="full" id="capcv"></canvas></div>
 
   <div class="scene" id="sw"><h2>From C <span class="x">to PulseView</span>.</h2>
     <div class="lede">Layered host stack: low level C access first, sigrok and ngscopeclient on top.</div>
     <svg class="full" id="swsvg" viewBox="0 0 1920 1080"></svg>
     <div class="term" id="swterm" style="left:53vw; top:25vh; width:42vw;">
-      <div class="bar"><span>TERMINAL · <b>SIMULATED DEVICE</b></span><span>slogic_util · sigrok-cli</span></div>
+      <div class="bar"><span>TERMINAL · <b>SIMULATED DEVICE</b></span><span>slogic16u3_util · sigrok-cli</span></div>
       <pre id="swcode"></pre></div></div>
 
-  <div class="scene" id="upd"><h2>Remote update, <span class="x">safe</span>.</h2>
-    <div class="lede">Update the gateware over USB3 from the running gateware. The Sipeed DFU loader is never written: MODE always gets back to it.</div>
+  <div class="scene" id="upd"><h2>Install over USB, <span class="x">no JTAG</span>.</h2>
+    <div class="lede">Through the Sipeed DFU loader, tested on hardware. The loader is never written: MODE always gets back to it.</div>
     <svg class="full" id="updsvg" viewBox="0 0 1920 1080"></svg>
     <div class="list" id="updlist" style="left:4.7vw; top:58vh;">
-      <div class="it"><span class="ck">✓</span><b>flash probe</b><span>MSPI pads mapped at runtime: JEDEC ID + SFDP</span></div>
-      <div class="it"><span class="ck">✓</span><b>erase · program · verify</b><span>application region only, writes guarded below 0x800000</span></div>
-      <div class="it"><span class="ck">✓</span><b>replug</b><span>the new gateware boots from 0x000000</span></div>
-      <div class="it"><span class="ck">✓</span><b>MODE button</b><span>multiboot to the DFU loader: recovery, stock firmware back</span></div>
+      <div class="it"><span class="ck">✓</span><b>dfu dump</b><span>16 MB backup of the unit, read twice: the way back to stock</span></div>
+      <div class="it"><span class="ck">✓</span><b>dfu update</b><span>backup checked · erase · program · verify in 36 s, below 0x800000 only</span></div>
+      <div class="it"><span class="ck">✓</span><b>replug</b><span>the gateware boots from 0x000000: self-test 198/198</span></div>
+      <div class="it"><span class="ck">✓</span><b>MODE button</b><span>back to the DFU loader: recovery, dfu restore</span></div>
     </div></div>
 
   <div class="scene" id="oss"><h2>Open source, <span class="x">upstream first</span>.</h2>
@@ -121,7 +122,7 @@
       <div class="tile"><div class="n">BOARD</div><b>LiteX-Boards</b><span>sipeed_slogic16u3<br>platform + target</span></div>
       <div class="tile"><div class="n">SERDES</div><b>LiteICLink</b><span>GTR12 transceivers<br>GW5AT-15 QUADB/UPARA</span></div>
       <div class="tile"><div class="n">USB3</div><b>USB3-PIPE</b><span>PHY + Device Core<br>GW5AT-15 Q0, 5 Gb/s</span></div>
-      <div class="tile"><div class="n">HOST</div><b>libslogic</b><span>BSD-2 C library<br>usb + sim transports</span></div>
+      <div class="tile"><div class="n">HOST</div><b>libslogic16u3</b><span>BSD-2 C library<br>usb + sim transports</span></div>
       <div class="tile"><div class="n">SIGROK</div><b>sigrok · PulseView</b><span>litex-slogic driver<br>soft triggers, limits</span></div>
       <div class="tile"><div class="n">SCOPEHAL</div><b>ngscopeclient</b><span>slogic driver<br>TwinLan bridge</span></div>
       <div class="tile"><div class="n">FILM</div><b>three.js</b><span>this video, rendered<br>in a browser</span></div>
@@ -133,11 +134,11 @@
     <div class="list" id="testlist" style="left:4.7vw; top:27vh;">
       <div class="it"><span class="ck">✓</span><b>Migen unit tests</b><span>capture (dividers/modes/limits/overflow), pattern generator, flash core with a SPI Flash model</span></div>
       <div class="it"><span class="ck">✓</span><b>USB3 system simulation</b><span>USB3-PIPE host model ↔ Device Core ↔ SoC: CSRs over EP0, captures over Bulk IN</span></div>
-      <div class="it"><span class="ck">✓</span><b>libslogic</b><span>186 checks on the simulated device: captures, pattern generator decoded, flash update guards</span></div>
+      <div class="it"><span class="ck">✓</span><b>libslogic16u3</b><span>186 checks on the simulated device: captures, pattern generator decoded, flash update guards</span></div>
       <div class="it"><span class="ck">✓</span><b>sigrok-cli · ngscopeclient bridge</b><span>end-to-end on the simulated device</span></div>
       <div class="it"><span class="ck">✓</span><b>Gowin build</b><span>GW5AT-15 bitstream: USB3 + capture + flash</span></div>
-      <div class="it"><span class="ck">✓</span><b>on the SLogic16U3</b><span>USB3 at 5 Gb/s · self-test 99/99 · 400 MB/s sustained</span></div>
-      <div class="it"><span class="ck next">→</span><b>next</b><span>inputs on real signals, Flash update and DFU on the hardware</span></div>
+      <div class="it"><span class="ck">✓</span><b>on the SLogic16U3</b><span>USB3 at 5 Gb/s · self-test 198/198 · 400 MB/s sustained · install over DFU</span></div>
+      <div class="it"><span class="ck next">→</span><b>next</b><span>inputs on real signals, remote update from the running gateware</span></div>
     </div></div>
 
   <h1 class="o" id="title">SLOGIC<span class="x">16U3</span></h1>
@@ -145,9 +146,9 @@
   <div class="o" id="specs">
     <div><b>CAPTURE</b>16 channels · 4ch@800 · 8ch@400 · 16ch@200 MS/s</div>
     <div><b>USB3</b>5 Gb/s in the FPGA transceivers · USB3-PIPE</div>
-    <div><b>SOFTWARE</b>libslogic (C) · sigrok/PulseView · ngscopeclient</div>
-    <div><b>UPDATE</b>remote update over USB3 · DFU recovery always</div>
-    <div><b>STATUS</b>USB3 5 Gb/s · 400 MB/s captures on hardware</div>
+    <div><b>SOFTWARE</b>libslogic16u3 (C) · sigrok/PulseView · ngscopeclient</div>
+    <div><b>UPDATE</b>install over the DFU loader, no JTAG · recovery always</div>
+    <div><b>STATUS</b>tested on hardware: USB3 5 Gb/s · 400 MB/s · self-test 198/198</div>
   </div>
   <div class="o" id="cta">github.com/<b>enjoy-digital/slogic_16u3</b></div>
   <div class="o" id="cta2">built with <b>LiteX</b> · github.com/enjoy-digital/litex</div>
@@ -262,22 +263,22 @@ const pcbW = v => () => D.pcb.localToWorld(v.clone());
 const A = D.anchors;
 const C_OUT = [
   [callout(rootW(A.header), '16 INPUTS', 'CH0-CH15 · 2x10 header · 0.47 dividers', -0.12, 0.10), 4.4, 7.2],
-  [callout(rootW(new THREE.Vector3(1.4, 1.0, 1.2)), 'ALUMINUM CASE', '40 × 40 × 10 mm', 0.10, -0.16), 4.9, 7.2],
+  [callout(rootW(new THREE.Vector3(1.4, 1.0, 1.2)), 'ALUMINUM SLEEVE', 'slides over the board · two end caps', 0.10, -0.16), 4.9, 7.2],
   [callout(rootW(A.usb), 'USB-C · 5 GB/S', 'SuperSpeed, no USB chip', -0.16, -0.20), 7.9, 9.9],
   [callout(rootW(A.led), 'LED', 'on: USB3 U0 · blinks: capturing', 0.10, -0.17), 8.2, 9.9],
   [callout(rootW(A.mode), 'MODE', 'back to the Sipeed DFU loader', 0.10, 0.12), 8.5, 9.9],
 ];
 const C_IN = [
   [callout(pcbW(A.fpga), 'GOWIN GW5AT-15', '15K LUT4 · GTR12 SerDes · MBGA132', 0.13, -0.17), 11.4, 13.9],
-  [callout(pcbW(A.flash), 'SPI FLASH 16MB', 'gateware 0x000000 · DFU loader 0x800000', -0.13, -0.13), 11.8, 13.9],
-  [callout(pcbW(A.osc), '125 MHZ OSCILLATOR', 'GTR12 reference clock', 0.12, 0.08), 12.2, 13.9],
-  [callout(pcbW(A.mux), 'VL162', 'USB-C orientation mux', 0.13, -0.05), 12.6, 13.9],
-  [callout(pcbW(A.dividers), 'INPUT DIVIDERS', 'LVCMOS inputs, ~1.6 V threshold', -0.12, 0.11), 12.9, 13.9],
+  [callout(pcbW(A.flash), 'SPI FLASH 16MB', 'gateware 0x000000 · DFU loader 0x800000', 0.05, -0.27), 11.8, 13.9],
+  [callout(pcbW(A.osc), '125 MHZ OSCILLATOR', 'GTR12 reference clock', 0.26, 0.05), 12.2, 13.9],
+  [callout(pcbW(A.mux), 'VL162', 'USB-C orientation mux', -0.22, -0.14), 12.6, 13.9],
+  [callout(pcbW(A.dividers), 'INPUT DIVIDERS', 'LVCMOS inputs, ~1.6 V threshold', -0.24, 0.12), 12.9, 13.9],
 ];
 const C_PATH = [
-  [callout(pcbW(A.dividers), 'SAMPLER', 'IDES8 · 800 MS/s base', -0.13, 0.08), 15.0, 19.6],
-  [callout(pcbW(A.fpga), 'CAPTURE + USB3 CORE', 'decimation · packer · Bulk IN', 0.13, -0.16), 15.6, 19.6],
-  [callout(pcbW(A.mux), 'GTR12 → USB-C', 'PIPE · LTSSM · 5 Gb/s', 0.12, 0.02), 16.2, 19.6],
+  [callout(pcbW(A.dividers), 'SAMPLER', 'IDES8 · 800 MS/s base', -0.24, 0.10), 15.0, 19.6],
+  [callout(pcbW(A.fpga), 'CAPTURE + USB3 CORE', 'decimation · packer · Bulk IN', 0.17, -0.20), 15.6, 19.6],
+  [callout(pcbW(A.mux), 'USB3-PIPE PHY → GTR12 → USB-C', 'LTSSM · PIPE · 5 Gb/s, tested on hardware', -0.22, -0.16), 16.2, 19.6],
 ];
 const ALL_CALLOUTS = [...C_OUT, ...C_IN, ...C_PATH];
 
@@ -293,9 +294,9 @@ const DSTEPS = [
   [['CDC + FIFO'], 'buffer', 'sample to sys clock crossing · a 16 KB FIFO absorbs the host gaps'],
   [['USB3 Core'], 'usb3 core', 'USB3-PIPE Device Core: Link and Protocol layers · Bulk IN, bursts of 16 packets'],
   [['USB3 PHY', 'GTR12', 'VL162'], 'usb3 phy', 'LTSSM and PIPE in the fabric, the GTR12 SerDes as the PHY · 5 Gb/s'],
-  [['Host PC'], 'host', 'libslogic · sigrok/PulseView · ngscopeclient · 400 MB/s sustained'],
+  [['Host PC'], 'host', 'libslogic16u3 · sigrok/PulseView · ngscopeclient · 400 MB/s sustained'],
   [['EP0 bridge', 'Analyzer CSRs'], 'control', 'no CPU: the host drives the CSRs over EP0 through a Wishbone bridge'],
-  [['Flash core', 'SPI flash'], 'update', 'remote update over USB3 · the Sipeed DFU loader is never written'],
+  [['Flash core', 'SPI flash'], 'update', 'Flash access from the gateware (remote update) · the Sipeed DFU loader is never written'],
 ];
 const diaghl = $('diaghl');
 const DVEIL = svgEl(diaghl, 'path', { fill: 'rgba(8,9,11,0.5)', 'fill-rule': 'evenodd', opacity: 0 });
@@ -328,7 +329,7 @@ function placeDiagram(T, k) {
   } else {
     DVEIL.setAttribute('opacity', 0); DRECTS.forEach(r => r.setAttribute('opacity', 0)); DDOT.setAttribute('opacity', 0);
     const ke = seg(T, DIAG_STEP0 + DSTEPS.length * DIAG_STEP, DIAG_STEP0 + DSTEPS.length * DIAG_STEP + 0.5);
-    $('diagstep').innerHTML = '<span class="n">ALL IN THE FPGA</span>no USB chip, no CPU · USB3 PHY, Device Core, capture and flash in a 15K LUT GW5AT-15';
+    $('diagstep').innerHTML = '<span class="n">ALL IN THE FPGA</span>no USB chip, no CPU · USB3 PHY, Device Core, capture and flash in a 15K LUT GW5AT-15 · tested on hardware';
     show($('diagstep'), ke, 6);
   }
 }
@@ -440,7 +441,7 @@ const swsvg = $('swsvg'); const SW = [];
   const x = 90, w = 870;
   box(x, 790, w, 96, 'SLOGIC16U3 GATEWARE', 'USB3: EP0 CSRs (CommUSB) · Bulk IN capture data · flash core', '#8b93a1', 0.3);
   box(x, 660, w, 96, 'LIBSLOGIC · C', 'libusb transport · simulated device · capture/unpack · flash update · DFU client', '#5cff8a', 0.7);
-  box(x, 500, 270, 124, 'TOOLS', 'slogic_util · slogic_record', '#ffb347', 1.1);
+  box(x, 500, 270, 124, 'TOOLS', 'slogic16u3_util · slogic16u3_record', '#ffb347', 1.1);
   box(x + 300, 500, 270, 124, 'SIGROK', 'litex-slogic driver', '#ffb347', 1.3);
   box(x + 600, 500, 270, 124, 'SCOPEHAL', 'TwinLan bridge', '#ffb347', 1.5);
   box(x + 300, 330, 270, 110, 'PULSEVIEW', 'sigrok-cli · decoders', '#4fc3ff', 1.9);
@@ -448,16 +449,16 @@ const swsvg = $('swsvg'); const SW = [];
   box(x, 330, 270, 110, 'YOUR CODE', 'C API · regs · streams', '#4fc3ff', 2.3);
 }
 const SWCODE = [
-  ['<span class="p">$</span> slogic_util -d sim info', 0],
-  ['Device     : SLogic16U3 LiteX', 1], ['Base rate  : 800 MHz (8 samples/cycle)', 1],
+  ['<span class="p">$</span> slogic16u3_util info', 0],
+  ['Device     : SLogic16U3 LiteX', 1], ['Transport  : usb (serial 0001, 5000 Mb/s)', 1],
   ['Max rate   : 4ch 800 MHz · 8ch 400 MHz · 16ch 200 MHz', 1],
-  ['<span class="p">$</span> slogic_util -d sim check', 0],
-  ['16 ch @ 200 MHz: <span class="k">OK</span> (100000 samples, 0 errors)', 1],
-  ['<span class="k">99/99 OK</span>', 1],
-  ['<span class="p">$</span> sigrok-cli -d litex-slogic:conn=sim -C CH0-CH3 \\', 0],
-  ['      -c samplerate=800M:pattern=counter --samples 16 -O hex', 0],
-  ['CH0:55 55', 1], ['CH1:33 33', 1], ['CH2:0f 0f', 1],
-  ['<span class="p">$</span> slogic_scopehal_bridge -d sim', 0],
+  ['<span class="p">$</span> slogic16u3_util check', 0],
+  ['generator 16 ch @ 200 MHz: <span class="k">OK</span> (100000 samples, 0 errors)', 1],
+  ['<span class="k">198/198 OK</span>', 1],
+  ['<span class="p">$</span> sigrok-cli -d litex-slogic -c samplerate=100M:pattern=generator \\', 0],
+  ['      --samples 200k -P uart:rx=CH0:baudrate=1000000 -A uart=rx-data', 0],
+  ['uart-1: 53 4C 6F 67 69 63 31 36 55 33  <span class="c">"SLogic16U3"</span>', 1],
+  ['<span class="p">$</span> slogic16u3_scopehal_bridge -d sim', 0],
   ['<span class="c">Bridge ready: SCPI port 5025, waveform port 5026</span>', 1],
 ];
 function plainLen(h) { return h.replace(/<[^>]+>/g, '').length; }
@@ -497,7 +498,7 @@ const updsvg = $('updsvg'); const UPD = {};
   svgEl(updsvg, 'rect', { x: xm, y: y + 2, width: x1 - xm - 2, height: h - 4, fill: 'rgba(255,179,71,0.10)' });
   svgEl(updsvg, 'line', { x1: xm, y1: y - 20, x2: xm, y2: y + h + 20, stroke: '#ffb347', 'stroke-width': 2.5 });
   svgEl(updsvg, 'text', { x: x0 + 24, y: y + 50, fill: '#e9edf3', 'font-size': 26, 'letter-spacing': 2 }, 'APPLICATION · LITEX GATEWARE');
-  svgEl(updsvg, 'text', { x: x0 + 24, y: y + 88, fill: '#8b93a1', 'font-size': 18 }, 'loaded at power-up · updated over USB3 (slogic_util flash update)');
+  svgEl(updsvg, 'text', { x: x0 + 24, y: y + 88, fill: '#8b93a1', 'font-size': 18 }, 'loaded at power-up · installed over the DFU loader (slogic16u3_util dfu update)');
   svgEl(updsvg, 'text', { x: xm + 24, y: y + 50, fill: '#ffb347', 'font-size': 26, 'letter-spacing': 2 }, 'SIPEED DFU LOADER · GOLDEN');
   svgEl(updsvg, 'text', { x: xm + 24, y: y + 88, fill: '#8b93a1', 'font-size': 18 }, 'never written · MODE button / fallback on a bad image');
   // lock
@@ -530,9 +531,9 @@ function placeScene(id, T, a, k, step) {
 // ---------------------------------------------------------------- captions
 const CAPS = [
   [0.6, 3.8, '01', 'Sipeed SLogic16U3', '16 channels · USB3 logic analyzer'],
-  [4.2, 9.8, '02', 'The hardware', '40 × 40 × 10 mm · aluminum'],
+  [4.2, 9.8, '02', 'The hardware', 'aluminum sleeve · two end caps'],
   [10.2, 13.8, '03', 'Inside', 'Gowin GW5AT-15 · no USB chip'],
-  [14.2, 19.6, '04', 'The data path', 'inputs → FPGA → USB3 transceiver'],
+  [14.2, 19.6, '04', 'The data path', 'inputs → FPGA → USB3 transceiver · tested on hardware'],
 ];
 
 // ---------------------------------------------------------------- camera / device poses
@@ -569,14 +570,14 @@ window.renderAt = function (TR) {
   const p = pose(T);
   camera.position.set(...p.cam); camera.lookAt(...p.tgt);
   D.root.rotation.y = p.rot;
-  // exploded view: lid lifts and fades, board rises
-  const ex = p.ex;
-  D.lid.position.y = 2.6 * E.out(ex);
-  D.lidMat.opacity = 1 - ex; D.labelMat.opacity = 1 - ex;
-  D.lidMat.depthWrite = ex < 0.5; D.lid.visible = ex < 0.98;
-  D.hdr.visible = ex < 0.5;
-  D.pcb.position.y = 0.42 + 0.5 * ex;
-  D.hdr.position.y = 0;
+  // opened case: back cap off, sleeve slides back off the board, front cap forward; the board rises
+  const ex = p.ex, kc = E.out(seg(ex, 0, 0.45)), ks = E.inOut(seg(ex, 0.2, 1));
+  D.capB.position.z = -1.6 * kc - 5.0 * ks;
+  D.sleeve.position.z = -5.0 * ks;
+  D.capF.position.z = 1.4 * kc;
+  for (const m of D.caseMats) { m.opacity = 1 - seg(ex, 0.35, 0.95); m.depthWrite = ex < 0.5; }
+  D.sleeve.visible = D.capF.visible = D.capB.visible = ex < 0.98;
+  D.pcb.position.y = 0.42 + 0.5 * E.inOut(seg(ex, 0.4, 1));
   // LED: off before USB3 (start), on, blinking during the capture scene
   const ledOn = T > 2.0 ? (T > 26 && T < 34 ? (Math.floor(T * 4) % 2) : 1) : 0;
   D.ledMat.color.setHex(ledOn ? 0xff3838 : 0x2a0c0c); D.ledGlow.material.opacity = ledOn ? 0.35 : 0;
