@@ -118,30 +118,22 @@
   <polygon points="315.0,340.0 324.0,336.2 324.0,343.8" fill="#595959"/>
   <polygon points="355.0,340.0 346.0,343.8 346.0,336.2" fill="#595959"/>
   <path d="M 420.0,420.0 L 1028.0,420.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
-  <path d="M 420.0,413.0 L 420.0,387.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
-  <polygon points="420.0,380.0 423.8,389.0 416.2,389.0" fill="#595959"/>
-  <polygon points="420.0,420.0 416.2,411.0 423.8,411.0" fill="#595959"/>
-  <circle cx="420" cy="420" r="3.5" fill="#595959"/>
-  <path d="M 572.0,413.0 L 572.0,387.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
-  <polygon points="572.0,380.0 575.8,389.0 568.2,389.0" fill="#595959"/>
-  <polygon points="572.0,420.0 568.2,411.0 575.8,411.0" fill="#595959"/>
-  <circle cx="572" cy="420" r="3.5" fill="#595959"/>
-  <path d="M 876.0,413.0 L 876.0,387.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
-  <polygon points="876.0,380.0 879.8,389.0 872.2,389.0" fill="#595959"/>
+  <path d="M 876.0,380.0 L 876.0,413.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
   <polygon points="876.0,420.0 872.2,411.0 879.8,411.0" fill="#595959"/>
-  <circle cx="876" cy="420" r="3.5" fill="#595959"/>
-  <path d="M 1028.0,413.0 L 1028.0,387.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
-  <polygon points="1028.0,380.0 1031.8,389.0 1024.2,389.0" fill="#595959"/>
+  <path d="M 1028.0,380.0 L 1028.0,413.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
   <polygon points="1028.0,420.0 1024.2,411.0 1031.8,411.0" fill="#595959"/>
-  <circle cx="1028" cy="420" r="3.5" fill="#595959"/>
+  <path d="M 420.0,420.0 L 420.0,387.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="420.0,380.0 423.8,389.0 416.2,389.0" fill="#595959"/>
+  <path d="M 572.0,420.0 L 572.0,387.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="572.0,380.0 575.8,389.0 568.2,389.0" fill="#595959"/>
   <text x="724.0" y="442" font-size="13" text-anchor="middle" fill="#1a1a1a" font-style="italic">Wishbone · CSR bus</text>
   <polygon points="963,465 1094,465 1108,479 1108,545 977,545 963,531" fill="#ffffff" stroke="#7f7f7f" stroke-width="1.5" filter="url(#shadow)"/>
   <text x="1035.5" y="493.7" font-size="16" text-anchor="middle" fill="#1a1a1a" font-weight="bold">CRG</text>
   <text x="1035.5" y="511.5" font-size="13" text-anchor="middle" fill="#1a1a1a">sys PLL from OSCA</text>
   <text x="1035.5" y="528.4" font-size="13" text-anchor="middle" fill="#1a1a1a">sample PLL from TX</text>
-  <path d="M 1200.0,635.0 L 1200.0,219.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
-  <polygon points="1200.0,212.0 1203.8,221.0 1196.2,221.0" fill="#595959"/>
-  <text x="1208" y="580" font-size="12" text-anchor="start" fill="#1a1a1a" font-style="italic">REFCLK</text>
+  <path d="M 1180.0,635.0 L 1180.0,219.0" fill="none" stroke="#595959" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="1180.0,212.0 1183.8,221.0 1176.2,221.0" fill="#595959"/>
+  <text x="1188" y="580" font-size="12" text-anchor="start" fill="#1a1a1a" font-style="italic">REFCLK</text>
   <text x="800" y="803" font-size="26" text-anchor="middle" fill="#1a1a1a" font-weight="bold" font-style="italic">SLogic16U3: open LiteX gateware for the Sipeed USB3 logic analyzer</text>
   <text x="800" y="832" font-size="15" text-anchor="middle" fill="#1a1a1a" font-style="italic">16 channels · 4ch@800 / 8ch@400 / 16ch@200 MS/s · 400 MB/s sustained over USB3 5 Gb/s</text>
   <text x="800" y="855" font-size="15" text-anchor="middle" fill="#1a1a1a" font-style="italic">USB3 in the FPGA transceivers (USB3-PIPE): no USB chip, no CPU · remote update over USB3</text>

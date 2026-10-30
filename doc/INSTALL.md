@@ -30,8 +30,13 @@ The udev rules give your user access to the gateware (`1d50:605a`) and to the Si
 
 ## 2. Enter the DFU Loader
 
-With the analyzer plugged in, press the **MODE** button: the LED blinks red and the analyzer re-enumerates
-as the Sipeed DFU loader.
+With the analyzer plugged in, press the **MODE** button (a short press): the LED blinks red and the analyzer
+re-enumerates as the Sipeed DFU loader, a USB 2.0 High-Speed device.
+
+> The DFU loader implements USB 2.0 in the FPGA fabric (the GW5AT-15 has no USB 2.0 PHY): on some host ports
+> or cables it does not enumerate (`dmesg`: `device descriptor read/64, error -71`). Connect the analyzer
+> **through a USB 2.0 hub** for the DFU steps (back to a USB3 port and cable for the gateware itself), or try
+> another cable/port. The tools retry the transfers lost on a marginal link.
 
 ```sh
 lsusb | grep 359f:30f1        # Sipeed DFU loader.
@@ -48,7 +53,7 @@ sha256sum slogic16u3-backup.bin > slogic16u3-backup.bin.sha256
 ```
 
 The dump is the whole 16MB Flash of your unit: the stock application and the DFU loader. The Flash is read
-twice and the two reads compared. This takes a few minutes, because the loader moves 64 bytes per USB
+twice and the two reads compared. This takes about 2 minutes, because the loader moves 64 bytes per USB
 transfer. Keep the file safe, and keep it private: it contains Sipeed's firmware. The tools check that a
 backup belongs to the unit before using it: its DFU loader region must match the Flash.
 
@@ -106,6 +111,7 @@ Replug: the analyzer runs the Sipeed firmware again (USB `359f:3031`, Sipeed's s
 | `Could not open usb: no device`, `Access denied`. | Check the udev rules (step 1), replug. Right after a re-enumeration, retry after a second. |
 | Not enumerated with the gateware. | Use a USB3 port and cable (`lsusb -t`: 5000M). Check that the MODE button was not pressed (DFU loader). |
 | `DFU loader ... no device`. | Press MODE (the LED blinks red), check `lsusb` for `359f:30f1`. |
+| DFU loader not enumerated (`dmesg`: `error -71`), `I/O error` in DFU commands. | Connect the analyzer through a USB 2.0 hub (or another cable/port) for the DFU steps. |
 | `Backup refused: ... another unit?` | The backup is not from this analyzer: use this unit's own dump. |
 | `Image refused`. | Use the `.bin` image of a release (the `.fs` file is for JTAG). |
 

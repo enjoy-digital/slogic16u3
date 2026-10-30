@@ -86,8 +86,12 @@ pipelining (sample clock), MaxBurst 4.
    on 4 channels.
 4. `slogic_util clock`: sample clock accuracy (GTR12 TX clock source).
 5. `slogic_util flash probe`: MSPI pads functions, then defaults in the Flash core/LiteX-Boards.
-6. Updates: `slogic_util dfu dump/update/restore` (backup, first install, back to stock: doc/INSTALL.md),
-   `slogic_util flash update` (remote), MODE button recovery; then a first release (`scripts/release.py`).
+6. Updates: **Done over DFU** (doc/INSTALL.md): `dfu dump` (16MB read twice, 104s), `dfu update --backup`
+   (backup checked, 8MB erased, programmed, verified in 36s), our gateware boots from Flash (`check` 198/198,
+   400MB/s), MODE gets back to the DFU loader from it, `dfu restore` (stock application back). The loader's
+   fabric USB 2.0 is marginal on some hosts (AMD xHCI here: `error -71`): through a USB 2.0 hub, with transfer
+   retries in the DFU client. **Open**: `slogic_util flash update` (remote, from our gateware: MSPI pads probe),
+   then a first release (`scripts/release.py`).
 7. sigrok-cli/PulseView, ngscopeclient on the hardware.
 
 ## Flash Layout / Update

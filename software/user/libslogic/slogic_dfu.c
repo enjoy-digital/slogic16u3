@@ -49,6 +49,7 @@
 #define DFU_MODE_WRITE_DUMMY_READ 0x5
 #define DFU_MODE_NO_DATA          0x7
 
+#define DFU_RETRIES            8  /* Bridge transfer retries (USB errors on marginal High-Speed links). */
 #define DFU_READ_CHUNK         64
 #define DFU_WRITE_CHUNK        12
 #define DFU_BLOCK              65536
@@ -149,8 +150,8 @@ static int dfu_reset(struct slogic_dfu *d)
 }
 
 /* SPI transfer: wr bytes out, then rd bytes in (after dummy bytes). */
-static int dfu_xfer(struct slogic_dfu *d, const uint8_t *wr, size_t wr_n, uint8_t *rd, size_t rd_n,
-                    unsigned dummy)
+static int dfu_xfer_once(struct slogic_dfu *d, const uint8_t *wr, size_t wr_n, uint8_t *rd, size_t rd_n,
+                         unsigned dummy)
 {
     uint8_t tx[64];
     size_t pad = (4 - wr_n % 4) % 4;
@@ -178,6 +179,33 @@ static int dfu_xfer(struct slogic_dfu *d, const uint8_t *wr, size_t wr_n, uint8_
             return r;
     }
     return dfu_assert_idle(d);
+}
+
+/* Bridge recovery after a USB error: endpoints halts cleared, stale IN data drained, bridge reset. */
+static void dfu_recover(struct slogic_dfu *d)
+{
+    uint8_t buf[1024];
+    int n;
+    libusb_clear_halt(d->handle, d->ep_out);
+    libusb_clear_halt(d->handle, d->ep_in);
+    while (!libusb_bulk_transfer(d->handle, d->ep_in, buf, sizeof(buf), &n, 20) && n > 0)
+        ;
+    dfu_reset(d);
+}
+
+/* SPI transfer with retries on USB errors (the loader's USB2 is implemented in the FPGA fabric: marginal
+   links lose transfers). Retrying is safe: reads, status, write enable/disable, and erase/page program of
+   the same data (the updates are verified). */
+static int dfu_xfer(struct slogic_dfu *d, const uint8_t *wr, size_t wr_n, uint8_t *rd, size_t rd_n,
+                    unsigned dummy)
+{
+    int r = SLOGIC_ERR_IO;
+    for (int i = 0; i < DFU_RETRIES; i++) {
+        if ((r = dfu_xfer_once(d, wr, wr_n, rd, rd_n, dummy)) != SLOGIC_ERR_IO)
+            return r;
+        dfu_recover(d);
+    }
+    return r;
 }
 
 /* Open/Close */
@@ -304,7 +332,9 @@ int slogic_dfu_check_backup(struct slogic_dfu *d, const uint8_t *backup, size_t 
     if (!(flash = malloc(end)))
         return SLOGIC_ERR_NOMEM;
     r = slogic_dfu_read(d, SLOGIC_FLASH_APP_SIZE, flash, end, NULL, NULL);
-    if (!r && memcmp(flash, gold, end)) {
+    if (r)
+        snprintf(msg, msg_size, "DFU loader region read: %s", slogic_strerror(r));
+    else if (memcmp(flash, gold, end)) {
         snprintf(msg, msg_size, "the DFU loader in the Flash differs from the backup's: backup of another unit?");
         r = SLOGIC_ERR_FLASH;
     }

@@ -91,9 +91,6 @@ def arrow(pts, double=False, heads=True):
     for x, y, dx, dy in hs:
         head(x, y, dx, dy, ARROW, size)
 
-def dot(x, y):
-    out.append(f'  <circle cx="{x}" cy="{y}" r="3.5" fill="{ARROW}"/>')
-
 def dashed(x1, x2, y, col=STROKE):
     out.append(f'  <line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{col}" stroke-width="1.2" stroke-dasharray="5,4"/>')
 
@@ -195,17 +192,18 @@ def draw(logos):
     arrow([(CX[3], 212), (CX[3], 300)], double=True)
     text(CX[3] - 8, 262, "EP0 · control", 13, anchor="end", style="italic")
     arrow([(X[0], 340), (315, 340)], double=True)
-    # CSR bus.
+    # CSR bus: masters (EP0 bridge, JTAGBone) to the bus, bus to the CSR targets (Flash core, Analyzer).
     arrow([(CX[0], 420), (CX[4], 420)], heads=False)
-    for x in (CX[0], CX[1], CX[3], CX[4]):
-        arrow([(x, 420), (x, 380)], double=True)
-        dot(x, 420)
+    for x in (CX[3], CX[4]):
+        arrow([(x, 380), (x, 420)])
+    for x in (CX[0], CX[1]):
+        arrow([(x, 420), (x, 380)])
     text((CX[1] + CX[3])/2, 442, "Wishbone · CSR bus", 13, style="italic")
 
     # Clocking.
     box(X[4], 465, X[4] + 145, 545, lines=[("CRG", 16, "bold"), ("sys PLL from OSCA", 13), ("sample PLL from TX", 13)])
-    arrow([(CX[5] + 20, 635), (CX[5] + 20, 212)])
-    text(CX[5] + 28, 580, "REFCLK", 12, anchor="start", style="italic")
+    arrow([(CX[5], 635), (CX[5], 212)])
+    text(CX[5] + 8, 580, "REFCLK", 12, anchor="start", style="italic")
 
     # Caption and logos.
     cx = 800

@@ -23,8 +23,10 @@ to PulseView:
   tests and sigrok/ngscopeclient end-to-end tests on the simulated device.
 
 > **Status: hardware bring-up in progress.** USB3 enumerates at 5Gbps on the SLogic16U3, the self-test captures
-> pass on hardware at the full 400MB/s (all channel modes, sustained); inputs, Flash pads and updates are next: see
-> [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU loader.
+> pass on hardware at the full 400MB/s (all channel modes, sustained), the pattern generator checks the full chain
+> without probes, install over the Sipeed DFU loader works (no JTAG, [doc/INSTALL.md](doc/INSTALL.md)); inputs and
+> remote updates are next: see [doc/PLAN.md](doc/PLAN.md). The stock firmware can always be restored from the DFU
+> loader.
 
 | | |
 |:---:|:---:|
