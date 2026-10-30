@@ -38,16 +38,6 @@ to PulseView:
 
 [![SLogic16U3 gateware](doc/images/slogic_16u3-diagram.png)](doc/images/slogic_16u3-diagram.svg)
 
-```
-             +------------------------------------- GW5AT-15 (LiteX SoC, no CPU) ----------------------------------+
-  CH0-CH15 ──┼─► IDES8 x16 ─► Capture ───────► CDC ─► FIFO ─► USB3 Device Core ─► USB3-PIPE PHY ─► GTR12 Q0 ─┼──► USB-C
-             │   800MS/s      pattern/decim/      2048x64     Bulk IN (EP1)       LTSSM/PIPE        5Gbps       │   (VL162)
-             │   (100MHz x8)  4-8-16ch/packer                 EP0 CommUSB ──┐                                    │
-             │                                                              ▼                                   │
-  SPI Flash ◄┼── Flash core (pads mapped at runtime) ◄── Wishbone/CSRs ◄────┘                                    │
-             +-------------------------------------------------------------------------------------------------+
-```
-
 | Channels | Max samplerate | Bandwidth | | Samplerates |
 |---|---|---|---|---|
 | 4  | 800MS/s | 3.2Gb/s | | 800MHz/N: 800, 400, 266, 200, 160, 100 ... MHz |
