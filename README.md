@@ -1,9 +1,10 @@
 # SLogic16U3
 
-https://github.com/enjoy-digital/slogic_16u3/raw/main/doc/images/slogic_16u3.mp4
+[![SLogic16U3 promo video: click to play](doc/images/slogic_16u3-video.jpg)](doc/images/slogic_16u3.mp4)
 
-<sub>▶ Promo video (rendered with three.js and a synthesized soundtrack from [`doc/illustration`](doc/illustration)).
-Also as [still](doc/images/slogic_16u3-hires.jpg).</sub>
+<sub>▶ Promo video (76 s, with sound: rendered with three.js and a synthesized soundtrack from
+[`doc/illustration`](doc/illustration)). Click the image to play it, also as [mp4](doc/images/slogic_16u3.mp4)
+and [still](doc/images/slogic_16u3-hires.jpg).</sub>
 
 **SLogic16U3**: open gateware and host stack for the **Sipeed SLogic16U3** USB3 logic analyzer, an alternative
 bitstream built with [LiteX](https://github.com/enjoy-digital/litex) where everything is open from the USB3 PHY
