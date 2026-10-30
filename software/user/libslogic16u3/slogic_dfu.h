@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: Sipeed DFU loader client (configuration SPI Flash access without our gateware: stock units,
+ * libslogic16u3: Sipeed DFU loader client (configuration SPI Flash access without our gateware: stock units,
  * recovery). Enter the loader with the MODE button (LED blinking red).
  *
  * This file is part of SLogic16U3.

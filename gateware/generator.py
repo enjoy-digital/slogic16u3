@@ -10,7 +10,7 @@ probes.
 
 The generator restarts with each capture (held at its origin while `enable` is low): sample t of the
 capture (t: base sample index, 800MS/s with ratio=8 at 100MHz, n = t//8: cycle, j = t%8: sample in the
-cycle) is a pure function of t, so the host checks every captured sample (libslogic
+cycle) is a pure function of t, so the host checks every captured sample (libslogic16u3
 slogic_generator_sample(), the same model):
 
 - CH0     : UART TX 8N1 at 1Mbaud (100 cycles per bit), GENERATOR_TEXT repeated, 12 bits frames: 2 idle

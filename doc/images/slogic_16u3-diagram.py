@@ -148,7 +148,7 @@ def draw(logos):
     # Outside the board: the probes and the host.
     box(10, 118, 150, 206, lines=[("Probes", 18, "bold"), ("CH0-CH15", 14), ("signals under test", 13)])
     arrow([(150, YR), (185, YR)])
-    box(1460, 90, 1590, 234, lines=[("Host PC", 18, "bold"), ("libslogic", 13), ("sigrok · PulseView", 13),
+    box(1460, 90, 1590, 234, lines=[("Host PC", 18, "bold"), ("libslogic16u3", 13), ("sigrok · PulseView", 13),
                                     ("ngscopeclient", 13)])
 
     # On the board.

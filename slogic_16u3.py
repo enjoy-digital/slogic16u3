@@ -160,7 +160,7 @@ class SLogicSoC(SLogicBaseSoC):
             with_u1u2     = False)
         self.add_usb3_phy_status(usb3_phy)
 
-        # USB3 Bring-up Debug (GTR12 status/UPAR, transitions, snapshots, LTSSM history: JTAGBone) ---
+        # USB3 Bring-up Debug (GTR12 status/UPAR, snapshots, LTSSM history: JTAGBone) --------------
         if with_usb3_debug:
             from gateware.usb3_debug import USB3Debug
             gtr12 = usb3_serdes.gtr12

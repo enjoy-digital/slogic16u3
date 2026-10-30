@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * slogic_record: SLogic16U3 capture to a file (raw packed samples, unpacked binary, VCD or CSV).
+ * slogic16u3_record: SLogic16U3 capture to a file (raw packed samples, unpacked binary, VCD or CSV).
  *
- *   slogic_record -r 100M -c 16 -n 1000000 -o capture.vcd
- *   slogic_record -r 800M -c 4 -t 2 -o capture.bin        (raw: as received, see slogic_unpack)
+ *   slogic16u3_record -r 100M -c 16 -n 1000000 -o capture.vcd
+ *   slogic16u3_record -r 800M -c 4 -t 2 -o capture.bin        (raw: as received, see slogic_unpack)
  *
  * This file is part of SLogic16U3.
  *
@@ -99,8 +99,8 @@ static void writer_samples(struct writer *w, const uint8_t *u, uint64_t n)
 
 static void help(void)
 {
-    printf("slogic_record " SLOGIC_VERSION_STRING ": SLogic16U3 capture to a file.\n"
-           "usage: slogic_record [options] -o <file>\n"
+    printf("slogic16u3_record " SLOGIC_VERSION_STRING ": SLogic16U3 capture to a file.\n"
+           "usage: slogic16u3_record [options] -o <file>\n"
            "  -d uri       Device (usb, usb:serial=<s>, sim).\n"
            "  -r rate      Samplerate (ex: 100M, default 100M).\n"
            "  -c channels  4, 8 or 16 (default 16).\n"

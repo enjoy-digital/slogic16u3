@@ -19,7 +19,7 @@
 
 /*
  * Sipeed SLogic16U3 with the open LiteX gateware (USB3 in the FPGA transceivers, LiteX CommUSB
- * register accesses over EP0, capture data over Bulk IN), through libslogic:
+ * register accesses over EP0, capture data over Bulk IN), through libslogic16u3:
  *
  *   sigrok-cli -d litex-slogic --samples 1M -c samplerate=100M
  *   sigrok-cli -d litex-slogic:conn=sim ...        (simulated device, no hardware)

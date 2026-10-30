@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: device, registers, configuration and capture.
+ * libslogic16u3: device, registers, configuration and capture.
  *
  * This file is part of SLogic16U3.
  *
@@ -114,7 +114,7 @@ static int slogic_read_info(struct slogic_dev *dev)
     info->ratio      = SLOGIC_CONFIG_RATIO(regs[2]);
     info->fifo_words = SLOGIC_CONFIG_FIFO_DEPTH(regs[2]);
     info->base_rate  = regs[3];
-    if (info->magic != SLOGIC_MAGIC || (info->version >> 16) != 1 || !info->ratio)
+    if (info->magic != SLOGIC_MAGIC || (info->version >> 16) != 0 || !info->ratio)
         return SLOGIC_ERR_DEVICE;
 
     /* Identifier: one character per CSR word, NUL terminated. */
@@ -254,11 +254,6 @@ int slogic_config_check(const struct slogic_info *info, const struct slogic_conf
     }
     if (config->pattern > SLOGIC_PATTERN_GENERATOR) {
         snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
-        return SLOGIC_ERR_ARG;
-    }
-    if (config->pattern == SLOGIC_PATTERN_GENERATOR && (info->version & 0xffff) < 1) {
-        snprintf(msg, msg_size, "pattern generator needs gateware >= 1.1 (device: %u.%u)",
-                 info->version >> 16, info->version & 0xffff);
         return SLOGIC_ERR_ARG;
     }
     return SLOGIC_OK;

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic internals: transports (USB, simulated device).
+ * libslogic16u3 internals: transports (USB, simulated device).
  *
  * This file is part of SLogic16U3.
  *

@@ -51,10 +51,10 @@ fetch() { # fetch <dir> <repo> <rev>
 # libsigrok + litex-slogic driver ------------------------------------------------------------------
 fetch libsigrok $LIBSIGROK_REPO $LIBSIGROK_REV
 D=$SRC/libsigrok/src/hardware/litex-slogic
-rm -rf "$D" && mkdir -p "$D/libslogic"
+rm -rf "$D" && mkdir -p "$D/libslogic16u3"
 cp "$HERE"/litex-slogic/*.[ch] "$D/"
 for f in slogic.h slogic_internal.h slogic_regs.h slogic.c slogic_usb.c slogic_sim.c; do
-    cp "$HERE/../user/libslogic/$f" "$D/libslogic/"
+    cp "$HERE/../user/libslogic16u3/$f" "$D/libslogic16u3/"
 done
 cd "$SRC/libsigrok"
 if ! grep -q "litex-slogic" configure.ac; then
@@ -68,12 +68,12 @@ src_libdrivers_la_SOURCES += \\
 	src/hardware/litex-slogic/protocol.h \\
 	src/hardware/litex-slogic/protocol.c \\
 	src/hardware/litex-slogic/api.c \\
-	src/hardware/litex-slogic/libslogic/slogic.h \\
-	src/hardware/litex-slogic/libslogic/slogic_internal.h \\
-	src/hardware/litex-slogic/libslogic/slogic_regs.h \\
-	src/hardware/litex-slogic/libslogic/slogic.c \\
-	src/hardware/litex-slogic/libslogic/slogic_usb.c \\
-	src/hardware/litex-slogic/libslogic/slogic_sim.c
+	src/hardware/litex-slogic/libslogic16u3/slogic.h \\
+	src/hardware/litex-slogic/libslogic16u3/slogic_internal.h \\
+	src/hardware/litex-slogic/libslogic16u3/slogic_regs.h \\
+	src/hardware/litex-slogic/libslogic16u3/slogic.c \\
+	src/hardware/litex-slogic/libslogic16u3/slogic_usb.c \\
+	src/hardware/litex-slogic/libslogic16u3/slogic_sim.c
 endif
 """
 t = t.replace("if HW_DEMO\n", block + "if HW_DEMO\n", 1)

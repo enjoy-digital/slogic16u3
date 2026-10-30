@@ -39,7 +39,7 @@
 #include "RemoteBridgeOscilloscope.h"
 
 /**
-	@brief SLogicOscilloscope - driver for the slogic_scopehal_bridge (Sipeed SLogic16U3 with the LiteX
+	@brief SLogicOscilloscope - driver for the slogic16u3_scopehal_bridge (Sipeed SLogic16U3 with the LiteX
 	gateware: 16 digital channels, up to 800MS/s)
 	@ingroup scopedrivers
  */

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: SLogic16U3 (LiteX gateware) host library.
+ * libslogic16u3: SLogic16U3 (LiteX gateware) host library.
  *
  * Device access over USB3 (EP0: SoC/CSR accesses, Bulk IN: capture data), or a simulated device
  * (software model of the gateware, for tests/development without hardware):
@@ -96,7 +96,7 @@ struct slogic_config {
     uint64_t samplerate;       /* Hz: base_rate/divider. */
     unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
     uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
-    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator (gateware >= 1.1). */
+    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator. */
 };
 
 struct slogic_status {

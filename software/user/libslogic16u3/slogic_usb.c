@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: USB3 transport (libusb-1.0).
+ * libslogic16u3: USB3 transport (libusb-1.0).
  *
  * - EP0: SoC bus accesses with vendor requests (LiteX CommUSB protocol, USB3-PIPE USB3EP0Wishbone):
  *   bmRequestType 0xc3 (read)/0x43 (write), bRequest 0, wValue/wIndex: address (low/high 16-bit), up to

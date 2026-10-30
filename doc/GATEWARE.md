@@ -31,7 +31,7 @@ style, SVG editable by hand; PNG with Inkscape, see the script). The video's wal
 | `sample`      | 100MHz    | CLKDIV /4 of `sample_fast`: IDES8 PCLK, Capture.                       |
 
 `--sample-clk-source osc` feeds the sample PLL from OSCA instead (no SerDes dependency, internal oscillator
-accuracy). `slogic_util clock` measures the sample clock against the host clock.
+accuracy). `slogic16u3_util clock` measures the sample clock against the host clock.
 
 ## Cores
 
@@ -54,10 +54,10 @@ accuracy). `slogic_util clock` measures the sample clock against the host clock.
 - Wire format: sample-major, first sample on the LSBs (4ch: 2 samples per byte), 64-bit words on the
   Bulk IN endpoint, the last word flushed (padded) with a short packet.
 - Limit (48-bit) or continuous until stopped, overflow (FIFO full: data lost) stops the capture.
-- Test sources, end-to-end checks without probes (`slogic_util check`: every sample checked):
+- Test sources, end-to-end checks without probes (`slogic16u3_util check`: every sample checked):
   - Counter (pattern 1): sample i = i x divider (16-bit, masked).
-  - Pattern generator (pattern 2, gateware >= 1.1): protocol-like signals at the base rate after the
-    deserializers, restarting with each capture, sample i = generator sample i x divider (libslogic
+  - Pattern generator (pattern 2): protocol-like signals at the base rate after the
+    deserializers, restarting with each capture, sample i = generator sample i x divider (libslogic16u3
     `slogic_generator_sample()`, the same model): CH0 UART 1Mbaud 8N1 ("SLogic16U3 LiteX pattern
     generator\r\n", idle at the capture start), CH1-CH3 SPI mode 0 12.5MHz (CS#/SCK/MOSI, "SLOG" every
     5.12us), CH4 PWM ~97.7kHz (duty sweep), CH5 100MHz clock, CH6-CH15 10-bit Gray counter at 100MHz.
@@ -66,7 +66,7 @@ accuracy). `slogic_util clock` measures the sample clock against the host clock.
 
 ## Registers
 
-Fixed CSR map ([slogic_regs.h](../software/user/libslogic/slogic_regs.h), checked against the generated
+Fixed CSR map ([slogic_regs.h](../software/user/libslogic16u3/slogic_regs.h), checked against the generated
 `csr.csv` by `test/test_regs.py`):
 
 | Bank           | Base   | Registers                                                                       |

@@ -4,7 +4,7 @@
 # Copyright (c) 2026 Florent Kermarrec <florent@enjoy-digital.fr>
 # SPDX-License-Identifier: BSD-2-Clause
 
-"""Register map: software/user/libslogic/slogic_regs.h against the csr.csv of the hardware target
+"""Register map: software/user/libslogic16u3/slogic_regs.h against the csr.csv of the hardware target
 (elaborated, not built): the fixed CSR map used by the host software."""
 
 import os
@@ -22,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def header_defines():
     """#define NAME value (resolved, simple (BASE + 0xNN) expressions)."""
-    text    = open(os.path.join(ROOT, "software", "user", "libslogic", "slogic_regs.h")).read()
+    text    = open(os.path.join(ROOT, "software", "user", "libslogic16u3", "slogic_regs.h")).read()
     defines = {}
     for name, value in re.findall(r"#define\s+(SLOGIC_\w+)\s+([^/\n]+)", text):
         value = value.strip()

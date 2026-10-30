@@ -25,8 +25,8 @@
 #include <libsigrok/libsigrok.h>
 #include "libsigrok-internal.h"
 
-/* libslogic (BSD-2-Clause): SLogic16U3 LiteX gateware host library. */
-#include "libslogic/slogic.h"
+/* libslogic16u3 (BSD-2-Clause): SLogic16U3 LiteX gateware host library. */
+#include "libslogic16u3/slogic.h"
 
 #define LOG_PREFIX "litex-slogic"
 
@@ -34,7 +34,7 @@
 #define LITEX_SLOGIC_READ_MS    10
 
 struct dev_context {
-	char *conn;                    /* libslogic URI ("usb", "usb:serial=...", "sim"). */
+	char *conn;                    /* libslogic16u3 URI ("usb", "usb:serial=...", "sim"). */
 	struct slogic_dev *dev;
 	struct slogic_info info;
 

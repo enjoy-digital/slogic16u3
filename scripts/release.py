@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 """Release package: gateware (Flash .bin for the DFU loader/remote update, SRAM .fs for JTAG), Linux tools
-(slogic_util, slogic_record), udev rules, install guide (doc/INSTALL.md), build information and checksums.
+(slogic16u3_util, slogic16u3_record), udev rules, install guide (doc/INSTALL.md), build information and checksums.
 
     ./scripts/build_best.py                                   # Bitstream in build/ (timings met).
     ./scripts/release.py 0.1.0 [--build-dir build] [--allow-dirty]
@@ -38,7 +38,7 @@ def git(path, *args):
     return r.stdout.strip() if r.returncode == 0 else None
 
 def image_check(data):
-    """GW5AT-15 bitstream (as libslogic slogic_image_check): sync word a5c3, IDCODE command 0x06."""
+    """GW5AT-15 bitstream (as libslogic16u3 slogic_image_check): sync word a5c3, IDCODE command 0x06."""
     i = data.find(b"\xa5\xc3", 0, 1024)
     if i < 0 or data[i + 2] != 0x06:
         return "no Gowin sync word/IDCODE in the header"
@@ -86,8 +86,8 @@ def main():
         f"gateware/{name}.bin"                  : binf,
         f"gateware/{name}.fs"                   : fsf,
         "gateware/csr.csv"                      : os.path.join(args.build_dir, "csr.csv"),
-        "tools/linux-x86_64/slogic_util"        : os.path.join(ROOT, "software", "user", "build", "slogic_util"),
-        "tools/linux-x86_64/slogic_record"      : os.path.join(ROOT, "software", "user", "build", "slogic_record"),
+        "tools/linux-x86_64/slogic16u3_util"        : os.path.join(ROOT, "software", "user", "build", "slogic16u3_util"),
+        "tools/linux-x86_64/slogic16u3_record"      : os.path.join(ROOT, "software", "user", "build", "slogic16u3_record"),
         "udev/99-slogic16u3.rules"              : os.path.join(ROOT, "software", "udev", "99-slogic16u3.rules"),
         "INSTALL.md"                            : os.path.join(ROOT, "doc", "INSTALL.md"),
         "LICENSE"                               : os.path.join(ROOT, "LICENSE"),
@@ -114,7 +114,8 @@ def main():
         f.write("Timings   : " + ", ".join(f"{k} {v[1]:.1f}/{v[0]:.1f}MHz" for k, v in timings.items()) + "\n")
         f.write("Sources   :\n")
         for n, p in deps:
-            f.write(f"  {n:13s} {git(p, 'rev-parse', '--short=10', 'HEAD')} ({git(p, 'rev-parse', '--abbrev-ref', 'HEAD')})"
+            rev, branch = git(p, "rev-parse", "--short=10", "HEAD"), git(p, "rev-parse", "--abbrev-ref", "HEAD")
+            f.write(f"  {n:13s} {rev} ({branch})"
                     f"{' dirty' if git(p, 'status', '--porcelain', '--untracked-files=no') else ''}\n")
 
     # Checksums, archive.

@@ -4,7 +4,7 @@
 # Copyright (c) 2026 Florent Kermarrec <florent@enjoy-digital.fr>
 # SPDX-License-Identifier: BSD-2-Clause
 
-"""ngscopeclient bridge: slogic_scopehal_bridge on the simulated device, driven as libscopehal does
+"""ngscopeclient bridge: slogic16u3_scopehal_bridge on the simulated device, driven as libscopehal does
 (SCPI control port, waveform port): identification, rates/depths, free-running and triggered waveforms
 (counter pattern bits checked, trigger position). Skipped when the host software is not built."""
 
@@ -16,7 +16,7 @@ import subprocess
 import unittest
 
 ROOT   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BRIDGE = os.path.join(ROOT, "software", "user", "build", "slogic_scopehal_bridge")
+BRIDGE = os.path.join(ROOT, "software", "user", "build", "slogic16u3_scopehal_bridge")
 
 FS = 1e15
 

@@ -3,9 +3,9 @@
 ```
   sigrok-cli / PulseView                 ngscopeclient
           │                                    │ TwinLan (SCPI + waveforms)
-  libsigrok driver (litex-slogic)       slogic_scopehal_bridge ◄── scopehal driver "slogic"
+  libsigrok driver (litex-slogic)       slogic16u3_scopehal_bridge ◄── scopehal driver "slogic"
           │                                    │
-          └──────────────► libslogic (C) ◄─────┘      slogic_util / slogic_record
+          └──────────────► libslogic16u3 (C) ◄─────┘      slogic16u3_util / slogic16u3_record
                      │                    │
               USB3 transport        sim transport (software model of the gateware)
           (libusb-1.0: EP0 CSRs,
@@ -14,9 +14,9 @@
 
 Every layer runs on the simulated device (`sim`): the tests, PulseView or ngscopeclient work without hardware.
 
-## libslogic
+## libslogic16u3
 
-C library ([`software/user/libslogic`](../software/user/libslogic), BSD-2-Clause):
+C library ([`software/user/libslogic16u3`](../software/user/libslogic16u3), BSD-2-Clause):
 
 ```c
 struct slogic_dev *dev;
@@ -40,26 +40,26 @@ Build and test: `make -C software/user && make -C software/user check` (needs li
 ## Tools
 
 ```sh
-slogic_util info                  # Device, gateware, USB3 link, max samplerates.
-slogic_util check                 # Self-test: counter + pattern generator captures, all modes/samplerates,
+slogic16u3_util info                  # Device, gateware, USB3 link, max samplerates.
+slogic16u3_util check                 # Self-test: counter + pattern generator captures, all modes/samplerates,
                                   # every sample checked (check [samples] counter|generator|all).
-slogic_util bench 16 200 5        # Throughput: 16 channels at 200MS/s for 5s (overflow reported).
-slogic_util clock                 # Sample clock frequency vs host clock (ppm).
-slogic_util reg 0x800             # Raw register access.
-slogic_util flash probe           # Flash pads mapping + JEDEC ID.
-slogic_util flash update app.bin  # Remote update (see UPDATE.md).
-slogic_util dfu dump backup.bin   # Full Flash backup from the Sipeed DFU loader (keep it private).
+slogic16u3_util bench 16 200 5        # Throughput: 16 channels at 200MS/s for 5s (overflow reported).
+slogic16u3_util clock                 # Sample clock frequency vs host clock (ppm).
+slogic16u3_util reg 0x800             # Raw register access.
+slogic16u3_util flash probe           # Flash pads mapping + JEDEC ID.
+slogic16u3_util flash update app.bin  # Remote update (see UPDATE.md).
+slogic16u3_util dfu dump backup.bin   # Full Flash backup from the Sipeed DFU loader (keep it private).
 
-slogic_record -r 100M -c 16 -n 1M -o capture.vcd   # VCD/CSV/u8 (unpacked)/raw packed.
-slogic_record -r 800M -c 4 -t 2 -o capture.bin     # Continuous for 2s.
-slogic_record -g -r 100M -c 16 -n 1M -o gen.vcd    # Pattern generator (no probes): UART/SPI/PWM/clock/Gray.
-slogic_util -d sim check                           # Any tool on the simulated device.
+slogic16u3_record -r 100M -c 16 -n 1M -o capture.vcd   # VCD/CSV/u8 (unpacked)/raw packed.
+slogic16u3_record -r 800M -c 4 -t 2 -o capture.bin     # Continuous for 2s.
+slogic16u3_record -g -r 100M -c 16 -n 1M -o gen.vcd    # Pattern generator (no probes): UART/SPI/PWM/clock/Gray.
+slogic16u3_util -d sim check                           # Any tool on the simulated device.
 ```
 
 ## sigrok / PulseView
 
 Native libsigrok driver `litex-slogic` ([`software/sigrok/litex-slogic`](../software/sigrok/litex-slogic)), on
-libslogic: samplerates, sample/time limits, soft triggers with capture ratio, test patterns (counter, generator), capture
+libslogic16u3: samplerates, sample/time limits, soft triggers with capture ratio, test patterns (counter, generator), capture
 mode (4/8/16 channels) from the highest enabled channel.
 
 ```sh
@@ -77,11 +77,11 @@ software/sigrok/install/bin/pulseview -d litex-slogic
 
 ## ngscopeclient
 
-`slogic_scopehal_bridge` exposes the device as a libscopehal remote bridge (SCPI control port 5025, waveform
+`slogic16u3_scopehal_bridge` exposes the device as a libscopehal remote bridge (SCPI control port 5025, waveform
 port 5026), with a software edge trigger and pre-trigger samples:
 
 ```sh
-software/user/build/slogic_scopehal_bridge            # -d sim for the simulated device.
+software/user/build/slogic16u3_scopehal_bridge            # -d sim for the simulated device.
 software/scopehal/install_driver.sh ~/ngscopeclient/lib   # Adds the "slogic" driver, rebuild ngscopeclient.
 # ngscopeclient: Add > Oscilloscope > driver "slogic", transport "twinlan", path "localhost:5025:5026".
 ```
@@ -99,7 +99,7 @@ litex_cli --regs                                    # CSRs (build/csr.csv).
 
 | Test                               | What                                                                    |
 |------------------------------------|-------------------------------------------------------------------------|
-| `make -C software/user check`      | libslogic on the simulated device: configurations, captures (data checked), overflow, unpacking, Flash probe/update/region guard, pattern generator decoded (UART/SPI/clock/Gray). |
+| `make -C software/user check`      | libslogic16u3 on the simulated device: configurations, captures (data checked), overflow, unpacking, Flash probe/update/region guard, pattern generator decoded (UART/SPI/clock/Gray). |
 | `test/test_sigrok.py`              | sigrok-cli + litex-slogic: scan, counter pattern captures 4/8/16 channels, pattern generator UART/SPI decoded, invalid configurations. |
 | `test/test_scopehal_bridge.py`     | Bridge protocol as libscopehal drives it: identification, free running and triggered waveforms. |
 | `test/test_regs.py`                | slogic_regs.h against the target csr.csv.                                |

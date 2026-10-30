@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * slogic_util: SLogic16U3 device utility (info, registers, self-test, throughput, Flash/update, DFU).
+ * slogic16u3_util: SLogic16U3 device utility (info, registers, self-test, throughput, Flash/update, DFU).
  *
  * This file is part of SLogic16U3.
  *
@@ -435,8 +435,8 @@ done:
 
 static void help(void)
 {
-    printf("slogic_util " SLOGIC_VERSION_STRING ": SLogic16U3 device utility.\n"
-           "usage: slogic_util [-d uri] <command> [args]\n"
+    printf("slogic16u3_util " SLOGIC_VERSION_STRING ": SLogic16U3 device utility.\n"
+           "usage: slogic16u3_util [-d uri] <command> [args]\n"
            "  -d uri               Device: usb (default), usb:serial=<s>, sim (simulated device).\n"
            "commands:\n"
            "  info                 Device information.\n"

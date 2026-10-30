@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic unit tests on the simulated device: info, configurations/samplerates, captures (counter
+ * libslogic16u3 unit tests on the simulated device: info, configurations/samplerates, captures (counter
  * pattern: data checked sample by sample, limits, continuous/stop, overflow), unpacking, Flash (probe,
  * update, region guard).
  *
@@ -379,6 +379,6 @@ int main(void)
     test_overflow();
     test_unpack();
     test_flash();
-    printf("libslogic tests: %d checks, %d failure(s)\n", checks, failures);
+    printf("libslogic16u3 tests: %d checks, %d failure(s)\n", checks, failures);
     return failures ? 1 : 0;
 }

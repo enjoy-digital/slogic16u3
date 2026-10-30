@@ -75,13 +75,13 @@ Gowin PnR dedicated pins (constraining IOs without the `use_*_as_gpio` options):
 - 16MB: application at 0x000000 (loaded at power-up), Sipeed DFU loader (golden image) at 0x800000. The
   GW5AT falls back to the golden image when the application fails its check.
 - MSPI pins: K13, K14, L14, L13, M14, M13 (functions to be identified: probed at runtime by the Flash core
-  pin mapping, see `slogic_util flash probe`).
+  pin mapping, see `slogic16u3_util flash probe`).
 
 ## DFU Loader (stock)
 
 - USB `359f:30f1` (MODE button: LED blinks red), USB-to-SPI bridge on Bulk OUT/IN (interface 0), packets
   `[u32 command][u32 length][data]` on ten u32 SPI master registers (ATCSPI200-like): see
-  `software/user/libslogic/slogic_dfu.c` (from slogic16u3-trace `tools/slogic_dfu.py` / Sipeed web flasher).
+  `software/user/libslogic16u3/slogic_dfu.c` (from slogic16u3-trace `tools/slogic_dfu.py` / Sipeed web flasher).
 
 ## Stock Firmware (reference)
 

@@ -49,7 +49,7 @@ using namespace std;
 /**
 	@brief Initialize the driver
 
-	@param transport	SCPITwinLanTransport pointing at a slogic_scopehal_bridge instance
+	@param transport	SCPITwinLanTransport pointing at a slogic16u3_scopehal_bridge instance
  */
 SLogicOscilloscope::SLogicOscilloscope(SCPITransport* transport)
 	: SCPIDevice(transport)

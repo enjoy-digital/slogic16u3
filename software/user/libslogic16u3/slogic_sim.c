@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: simulated device (software model of the gateware), for tests and development without
+ * libslogic16u3: simulated device (software model of the gateware), for tests and development without
  * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
  *
  * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
@@ -306,7 +306,7 @@ static uint32_t sim_read(struct sim *s, uint32_t addr)
     }
     switch (addr) {
     case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-    case SLOGIC_ANALYZER_VERSION:   return 0x00010001;
+    case SLOGIC_ANALYZER_VERSION:   return 0x00000001;
     case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
     case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
     case SLOGIC_ANALYZER_CONTROL:   return s->control;

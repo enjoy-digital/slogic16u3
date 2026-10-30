@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: configuration SPI Flash access through the gateware Flash core (remote update).
+ * libslogic16u3: configuration SPI Flash access through the gateware Flash core (remote update).
  *
  * SPI transfers: bytes written to the TX buffer, transfer started, received bytes read from the RX buffer
  * (same offsets, up to SLOGIC_FLASH_BUFFER_SIZE bytes per transfer, CS_N held between transfers with

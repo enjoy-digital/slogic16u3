@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * libslogic: Sipeed DFU loader client (USB 359f:30f1, MODE button): configuration SPI Flash access
+ * libslogic16u3: Sipeed DFU loader client (USB 359f:30f1, MODE button): configuration SPI Flash access
  * without our gateware (stock units, recovery).
  *
  * The loader exposes a USB-to-SPI bridge on Bulk OUT/IN (interface 0): packets [u32 command][u32 length]

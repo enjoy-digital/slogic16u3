@@ -20,7 +20,7 @@
   <polygon points="185.0,162.0 176.0,165.8 176.0,158.2" fill="#595959"/>
   <polygon points="1460,90 1576,90 1590,104 1590,234 1474,234 1460,220" fill="#ffffff" stroke="#7f7f7f" stroke-width="1.5" filter="url(#shadow)"/>
   <text x="1525.0" y="142.95" font-size="18" text-anchor="middle" fill="#1a1a1a" font-weight="bold">Host PC</text>
-  <text x="1525.0" y="161.35" font-size="13" text-anchor="middle" fill="#1a1a1a">libslogic</text>
+  <text x="1525.0" y="161.35" font-size="13" text-anchor="middle" fill="#1a1a1a">libslogic16u3</text>
   <text x="1525.0" y="178.25" font-size="13" text-anchor="middle" fill="#1a1a1a">sigrok · PulseView</text>
   <text x="1525.0" y="195.15" font-size="13" text-anchor="middle" fill="#1a1a1a">ngscopeclient</text>
   <polygon points="185,112 301,112 315,126 315,212 199,212 185,198" fill="#ffffff" stroke="#7f7f7f" stroke-width="1.5" filter="url(#shadow)"/>

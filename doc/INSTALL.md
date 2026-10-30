@@ -40,7 +40,7 @@ re-enumerates as the Sipeed DFU loader, a USB 2.0 High-Speed device.
 
 ```sh
 lsusb | grep 359f:30f1        # Sipeed DFU loader.
-slogic_util dfu id            # Flash JEDEC ID through the loader.
+slogic16u3_util dfu id            # Flash JEDEC ID through the loader.
 ```
 
 The loader is the same with the stock firmware and with this gateware, and nothing here ever writes it.
@@ -48,7 +48,7 @@ The loader is the same with the stock firmware and with this gateware, and nothi
 ## 3. Backup (Once, Before Anything Else)
 
 ```sh
-slogic_util dfu dump slogic16u3-backup.bin
+slogic16u3_util dfu dump slogic16u3-backup.bin
 sha256sum slogic16u3-backup.bin > slogic16u3-backup.bin.sha256
 ```
 
@@ -62,24 +62,24 @@ backup belongs to the unit before using it: its DFU loader region must match the
 Still in the DFU loader (MODE button again if you replugged):
 
 ```sh
-slogic_util dfu update gateware/slogic16u3-<version>.bin --backup slogic16u3-backup.bin
+slogic16u3_util dfu update gateware/slogic16u3-<version>.bin --backup slogic16u3-backup.bin
 ```
 
 The image is checked first: it must be a GW5AT-15 bitstream that fits the application region. Then the
 application region (0x000000-0x7fffff) is erased, programmed and verified. Replug the analyzer:
 
 ```sh
-slogic_util info              # "SLogic16U3 LiteX", 5000 Mb/s, gateware version.
-slogic_util check             # Self-test without probes: counter + pattern generator, all modes/rates.
+slogic16u3_util info              # "SLogic16U3 LiteX", 5000 Mb/s, gateware version.
+slogic16u3_util check             # Self-test without probes: counter + pattern generator, all modes/rates.
 ```
 
 ## 5. Use It
 
-- `slogic_record`: captures to VCD/CSV/raw (`slogic_record -r 100M -c 16 -n 1M -o capture.vcd`).
+- `slogic16u3_record`: captures to VCD/CSV/raw (`slogic16u3_record -r 100M -c 16 -n 1M -o capture.vcd`).
 - sigrok-cli/PulseView: the `litex-slogic` libsigrok driver (see [SOFTWARE.md](https://github.com/enjoy-digital/slogic_16u3/blob/main/doc/SOFTWARE.md), built from the
   sources with `software/sigrok/build.sh --pulseview`).
-- ngscopeclient: `slogic_scopehal_bridge` (see [SOFTWARE.md](https://github.com/enjoy-digital/slogic_16u3/blob/main/doc/SOFTWARE.md)).
-- No probes at hand: the pattern generator (`slogic_record -g ...`, sigrok `pattern=generator`) produces UART,
+- ngscopeclient: `slogic16u3_scopehal_bridge` (see [SOFTWARE.md](https://github.com/enjoy-digital/slogic_16u3/blob/main/doc/SOFTWARE.md)).
+- No probes at hand: the pattern generator (`slogic16u3_record -g ...`, sigrok `pattern=generator`) produces UART,
   SPI, PWM, a clock and a Gray counter inside the FPGA, which you can decode in PulseView.
 
 ## Update to a New Release
@@ -87,8 +87,8 @@ slogic_util check             # Self-test without probes: counter + pattern gene
 From the running gateware (no MODE button):
 
 ```sh
-slogic_util flash probe
-slogic_util flash update gateware/slogic16u3-<new version>.bin
+slogic16u3_util flash probe
+slogic16u3_util flash update gateware/slogic16u3-<new version>.bin
 ```
 
 Then replug. Or through the DFU loader, as in step 4.
@@ -97,7 +97,7 @@ Then replug. Or through the DFU loader, as in step 4.
 
 ```sh
 # MODE button -> DFU loader (LED blinking red).
-slogic_util dfu restore slogic16u3-backup.bin
+slogic16u3_util dfu restore slogic16u3-backup.bin
 ```
 
 This writes back the stock application from your backup, checked against the unit first, then verifies it.

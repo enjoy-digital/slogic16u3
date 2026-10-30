@@ -26,10 +26,10 @@ the MODE button always gets back to it, the stock application can be restored at
 Host stack (layered, C first):
 
 ```
- libslogic (C: USB3 transport on libusb-1.0: EP0 CSR accesses, Bulk IN transfers ring; simulated device)
-   -> slogic_util (info/check/bench/clock/regs/flash/dfu), slogic_record (raw/u8/VCD/CSV)
+ libslogic16u3 (C: USB3 transport on libusb-1.0: EP0 CSR accesses, Bulk IN transfers ring; simulated device)
+   -> slogic16u3_util (info/check/bench/clock/regs/flash/dfu), slogic16u3_record (raw/u8/VCD/CSV)
    -> libsigrok driver (litex-slogic): sigrok-cli, PulseView
-   -> slogic_scopehal_bridge (TwinLan) + scopehal driver "slogic": ngscopeclient
+   -> slogic16u3_scopehal_bridge (TwinLan) + scopehal driver "slogic": ngscopeclient
  Python: litex_server --usb (CommUSB), test models.
 ```
 
@@ -42,9 +42,9 @@ Host stack (layered, C first):
 | 2  | Gateware cores           | Sampler (IDES8), Capture (pattern/decimation/modes/packer/limit/overflow), Analyzer, Flash; tests.    | Done (sim)        |
 | 3  | SoC                      | CRG, USB3 (PHY + Core + EP0 Wishbone + Bulk IN), fixed CSR map, Gowin build (fit/timings).            | Fit, timings WIP  |
 | 4  | System simulation        | USB3 host model <-> Device Core <-> SoC: CSR accesses and pattern captures over Bulk IN.              | Done (sim)        |
-| 5  | C host stack             | libslogic (USB3/sim transports), slogic_util/slogic_record, DFU loader client, C tests.               | Done (sim)        |
+| 5  | C host stack             | libslogic16u3 (USB3/sim transports), slogic16u3_util/slogic16u3_record, DFU loader client, C tests.               | Done (sim)        |
 | 6  | sigrok / PulseView       | litex-slogic libsigrok driver, build script (libsigrok/libsigrokdecode/sigrok-cli/PulseView), tests.  | Done (sim)        |
-| 7  | ngscopeclient            | slogic_scopehal_bridge (TwinLan) + scopehal driver "slogic" (syntax checked), bridge tests.           | Done (sim)        |
+| 7  | ngscopeclient            | slogic16u3_scopehal_bridge (TwinLan) + scopehal driver "slogic" (syntax checked), bridge tests.           | Done (sim)        |
 | 8  | Remote update            | Flash pads probe, update with verify (app region only), DFU loader client, recovery docs.             | Done (sim)        |
 | 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | In progress       |
 | 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
@@ -67,7 +67,7 @@ pipelining (sample clock), MaxBurst 4.
 ## Hardware Bring-up Steps
 
 1. **Done**: USB3 enumeration (5000M, `SLogic16U3 LiteX`, descriptors/strings), EP0 CSR accesses (1000/1000
-   write/read), `slogic_util info` (U0). Findings:
+   write/read), `slogic16u3_util info` (U0). Findings:
    - QPLL1: no link (host sees no device); QPLL0 (Gowin's USB 3.0 PHY IP choice): default.
    - CDR/QPLL0 settings from Gowin's USB 3.0 PHY IP configuration (USB3-PIPE `GW5AT15_Q0_QPLL0_OVERRIDES`, `usb3_pipe/gw5`): with the
      serdes_toml_to_csr CDR value, RX 8b/10b errors prevent the training (Polling.Idle timeouts).
@@ -76,21 +76,21 @@ pipelining (sample clock), MaxBurst 4.
      toolchain).
    - Bring-up debug: `--with-jtagbone --with-usb3-debug` (LTSSM history, GTR12 status/UPAR, link statistics,
      Data Packets rings) over the JTAG port, `software/debug/usb3_debug.py`.
-2. **Done** (full bitstream over JTAG): `slogic_util check` 198/198 (counter pattern and pattern generator, all
-   modes, 1kHz to 400MB/s, every sample checked; generator UART/SPI decoded by sigrok-cli on the device), `slogic_util bench` 400MB/s sustained (30s) at 4ch@800MHz, 8ch@400MHz and 16ch@200MHz. Findings:
+2. **Done** (full bitstream over JTAG): `slogic16u3_util check` 198/198 (counter pattern and pattern generator, all
+   modes, 1kHz to 400MB/s, every sample checked; generator UART/SPI decoded by sigrok-cli on the device), `slogic16u3_util bench` 400MB/s sustained (30s) at 4ch@800MHz, 8ch@400MHz and 16ch@200MHz. Findings:
    - 32-bit capture CDC to sys (250MB/s at 62.5MHz): 64-bit words converted in the sample clock domain.
    - Bulk IN at ~370MB/s with a Max Burst of 8 (`--with-jtagbone --with-usb3-counters`: device waiting for a host
      request ~50% of the time, ACK TPs NumP counted down from Max Burst by the AMD xHCI): Max Burst 16, capture
      FIFO 2048x64 (16KB) against the host gaps.
 3. Inputs: IDES8 bit order (Q0 first, from the Gowin model), CH0-CH15 mapping, LVCMOS15UD33 threshold, 800MS/s
    on 4 channels.
-4. `slogic_util clock`: sample clock accuracy (GTR12 TX clock source).
-5. `slogic_util flash probe`: MSPI pads functions, then defaults in the Flash core/LiteX-Boards.
+4. `slogic16u3_util clock`: sample clock accuracy (GTR12 TX clock source).
+5. `slogic16u3_util flash probe`: MSPI pads functions, then defaults in the Flash core/LiteX-Boards.
 6. Updates: **Done over DFU** (doc/INSTALL.md): `dfu dump` (16MB read twice, 104s), `dfu update --backup`
    (backup checked, 8MB erased, programmed, verified in 36s), our gateware boots from Flash (`check` 198/198,
    400MB/s), MODE gets back to the DFU loader from it, `dfu restore` (stock application back). The loader's
    fabric USB 2.0 is marginal on some hosts (AMD xHCI here: `error -71`): through a USB 2.0 hub, with transfer
-   retries in the DFU client. **Open**: `slogic_util flash update` (remote, from our gateware: MSPI pads probe),
+   retries in the DFU client. **Open**: `slogic16u3_util flash update` (remote, from our gateware: MSPI pads probe),
    then a first release (`scripts/release.py`).
 7. sigrok-cli/PulseView, ngscopeclient on the hardware.
 
@@ -98,17 +98,17 @@ pipelining (sample clock), MaxBurst 4.
 
 | Region            | Content                                                     | Written by                         |
 |-------------------|-------------------------------------------------------------|------------------------------------|
-| 0x000000-0x7fffff | Application bitstream (this project or the stock one).     | `slogic_util update`, DFU loader   |
+| 0x000000-0x7fffff | Application bitstream (this project or the stock one).     | `slogic16u3_util update`, DFU loader   |
 | 0x800000-0xffffff | Sipeed DFU loader (golden image).                           | Never.                             |
 
 - The bitstream is built with multiboot to 0x800000: the MODE button (RECONFIG_N) reloads the DFU loader.
 - A corrupted application fails its check at power-up and the GW5AT falls back to the golden image (DFU).
-- Update from our gateware: `slogic_util update app.bin` (erase/program/verify over EP0, replug to boot).
-- Update from the DFU loader (stock or bricked unit): `slogic_util dfu write app.bin` (Sipeed bridge protocol).
+- Update from our gateware: `slogic16u3_util update app.bin` (erase/program/verify over EP0, replug to boot).
+- Update from the DFU loader (stock or bricked unit): `slogic16u3_util dfu write app.bin` (Sipeed bridge protocol).
 
 ## Open Questions (Hardware)
 
-- SPI Flash MSPI pins functions (K13/K14/L14/L13/M14/M13): probed at runtime (`slogic_util flash probe`).
+- SPI Flash MSPI pins functions (K13/K14/L14/L13/M14/M13): probed at runtime (`slogic16u3_util flash probe`).
 - Threshold voltage DAC (stock: 10-bit, `V/3.33/2*1024`, 0-6V): pin/interface to be identified.
 - Fabric reconfiguration from the gateware (reboot after update without replug): SAMB + ? (to investigate).
 - Sample clock source: GTR12 TX clock (125MHz oscillator, accurate) vs OSCA (internal, inaccurate).

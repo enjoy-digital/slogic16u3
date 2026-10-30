@@ -5,7 +5,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 """sigrok: sigrok-cli with the litex-slogic driver on the simulated device (counter pattern data checked
-through the whole libsigrok path, pattern generator decoded by libsigrokdecode). Skipped when software/sigrok/build.sh has not been run."""
+through the whole libsigrok path, pattern generator decoded by libsigrokdecode). Skipped when
+software/sigrok/build.sh has not been run."""
 
 import os
 import subprocess

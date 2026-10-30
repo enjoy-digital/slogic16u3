@@ -1,5 +1,5 @@
 diff --git a/Makefile.am b/Makefile.am
-index 3b68142f..5be1195f 100644
+index 3b68142f..078540ef 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -337,6 +337,18 @@ src_libdrivers_la_SOURCES += \
@@ -11,12 +11,12 @@ index 3b68142f..5be1195f 100644
 +	src/hardware/litex-slogic/protocol.h \
 +	src/hardware/litex-slogic/protocol.c \
 +	src/hardware/litex-slogic/api.c \
-+	src/hardware/litex-slogic/libslogic/slogic.h \
-+	src/hardware/litex-slogic/libslogic/slogic_internal.h \
-+	src/hardware/litex-slogic/libslogic/slogic_regs.h \
-+	src/hardware/litex-slogic/libslogic/slogic.c \
-+	src/hardware/litex-slogic/libslogic/slogic_usb.c \
-+	src/hardware/litex-slogic/libslogic/slogic_sim.c
++	src/hardware/litex-slogic/libslogic16u3/slogic.h \
++	src/hardware/litex-slogic/libslogic16u3/slogic_internal.h \
++	src/hardware/litex-slogic/libslogic16u3/slogic_regs.h \
++	src/hardware/litex-slogic/libslogic16u3/slogic.c \
++	src/hardware/litex-slogic/libslogic16u3/slogic_usb.c \
++	src/hardware/litex-slogic/libslogic16u3/slogic_sim.c
 +endif
  if HW_DEMO
  src_libdrivers_la_SOURCES += \
@@ -35,7 +35,7 @@ index 024dd4da..97806095 100644
  SR_DRIVER([Link Instruments MSO-19], [link-mso19], [libserialport])
 diff --git a/src/hardware/litex-slogic/api.c b/src/hardware/litex-slogic/api.c
 new file mode 100644
-index 00000000..7a67b534
+index 00000000..e9520da0
 --- /dev/null
 +++ b/src/hardware/litex-slogic/api.c
 @@ -0,0 +1,317 @@
@@ -60,7 +60,7 @@ index 00000000..7a67b534
 +
 +/*
 + * Sipeed SLogic16U3 with the open LiteX gateware (USB3 in the FPGA transceivers, LiteX CommUSB
-+ * register accesses over EP0, capture data over Bulk IN), through libslogic:
++ * register accesses over EP0, capture data over Bulk IN), through libslogic16u3:
 + *
 + *   sigrok-cli -d litex-slogic --samples 1M -c samplerate=100M
 + *   sigrok-cli -d litex-slogic:conn=sim ...        (simulated device, no hardware)
@@ -356,15 +356,15 @@ index 00000000..7a67b534
 +	.context = NULL,
 +};
 +SR_REGISTER_DEV_DRIVER(litex_slogic_driver_info);
-diff --git a/src/hardware/litex-slogic/libslogic/slogic.c b/src/hardware/litex-slogic/libslogic/slogic.c
+diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic.c b/src/hardware/litex-slogic/libslogic16u3/slogic.c
 new file mode 100644
-index 00000000..0c05fcaf
+index 00000000..28694b49
 --- /dev/null
-+++ b/src/hardware/litex-slogic/libslogic/slogic.c
-@@ -0,0 +1,456 @@
++++ b/src/hardware/litex-slogic/libslogic16u3/slogic.c
+@@ -0,0 +1,451 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * libslogic: device, registers, configuration and capture.
++ * libslogic16u3: device, registers, configuration and capture.
 + *
 + * This file is part of SLogic16U3.
 + *
@@ -478,7 +478,7 @@ index 00000000..0c05fcaf
 +    info->ratio      = SLOGIC_CONFIG_RATIO(regs[2]);
 +    info->fifo_words = SLOGIC_CONFIG_FIFO_DEPTH(regs[2]);
 +    info->base_rate  = regs[3];
-+    if (info->magic != SLOGIC_MAGIC || (info->version >> 16) != 1 || !info->ratio)
++    if (info->magic != SLOGIC_MAGIC || (info->version >> 16) != 0 || !info->ratio)
 +        return SLOGIC_ERR_DEVICE;
 +
 +    /* Identifier: one character per CSR word, NUL terminated. */
@@ -618,11 +618,6 @@ index 00000000..0c05fcaf
 +    }
 +    if (config->pattern > SLOGIC_PATTERN_GENERATOR) {
 +        snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
-+        return SLOGIC_ERR_ARG;
-+    }
-+    if (config->pattern == SLOGIC_PATTERN_GENERATOR && (info->version & 0xffff) < 1) {
-+        snprintf(msg, msg_size, "pattern generator needs gateware >= 1.1 (device: %u.%u)",
-+                 info->version >> 16, info->version & 0xffff);
 +        return SLOGIC_ERR_ARG;
 +    }
 +    return SLOGIC_OK;
@@ -818,15 +813,15 @@ index 00000000..0c05fcaf
 +        break;
 +    }
 +}
-diff --git a/src/hardware/litex-slogic/libslogic/slogic.h b/src/hardware/litex-slogic/libslogic/slogic.h
+diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic.h b/src/hardware/litex-slogic/libslogic16u3/slogic.h
 new file mode 100644
-index 00000000..fc12a4d0
+index 00000000..6094be97
 --- /dev/null
-+++ b/src/hardware/litex-slogic/libslogic/slogic.h
-@@ -0,0 +1,175 @@
++++ b/src/hardware/litex-slogic/libslogic16u3/slogic.h
+@@ -0,0 +1,180 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * libslogic: SLogic16U3 (LiteX gateware) host library.
++ * libslogic16u3: SLogic16U3 (LiteX gateware) host library.
 + *
 + * Device access over USB3 (EP0: SoC/CSR accesses, Bulk IN: capture data), or a simulated device
 + * (software model of the gateware, for tests/development without hardware):
@@ -922,7 +917,7 @@ index 00000000..fc12a4d0
 +    uint64_t samplerate;       /* Hz: base_rate/divider. */
 +    unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
 +    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
-+    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator (gateware >= 1.1). */
++    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator. */
 +};
 +
 +struct slogic_status {
@@ -970,6 +965,7 @@ index 00000000..fc12a4d0
 +/* Flash (configuration SPI Flash, remote update) */
 +/*-----------------------------------------------*/
 +
++#define SLOGIC_FLASH_SIZE        0x1000000 /* 16MB: application (0x000000) + Sipeed DFU loader (0x800000). */
 +#define SLOGIC_FLASH_APP_BASE    0x000000
 +#define SLOGIC_FLASH_APP_SIZE    0x800000 /* Application region (the DFU loader is above, never written). */
 +#define SLOGIC_FLASH_SECTOR      4096
@@ -990,6 +986,10 @@ index 00000000..fc12a4d0
 +int slogic_flash_write(struct slogic_dev *dev, uint32_t addr, const uint8_t *data, size_t size);
 +
 +typedef void (*slogic_progress_cb)(const char *step, size_t done, size_t total, void *user);
++/* Application image check: a GW5AT-15 bitstream (sync word and SLOGIC_GW5AT15_IDCODE in its header) that fits
++ * the application region (not a full Flash dump). SLOGIC_OK or SLOGIC_ERR_ARG (msg: reason, may be NULL). */
++#define SLOGIC_GW5AT15_IDCODE 0x0001681b
++int slogic_image_check(const uint8_t *image, size_t size, char *msg, size_t msg_size);
 +/* Application update: erase, program and verify image at 0x000000 (replug to boot it). */
 +int slogic_flash_update(struct slogic_dev *dev, const uint8_t *image, size_t size,
 +                        slogic_progress_cb progress, void *user);
@@ -999,15 +999,15 @@ index 00000000..fc12a4d0
 +#endif
 +
 +#endif /* SLOGIC_H */
-diff --git a/src/hardware/litex-slogic/libslogic/slogic_internal.h b/src/hardware/litex-slogic/libslogic/slogic_internal.h
+diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_internal.h b/src/hardware/litex-slogic/libslogic16u3/slogic_internal.h
 new file mode 100644
-index 00000000..efde1d4c
+index 00000000..90263c9b
 --- /dev/null
-+++ b/src/hardware/litex-slogic/libslogic/slogic_internal.h
++++ b/src/hardware/litex-slogic/libslogic16u3/slogic_internal.h
 @@ -0,0 +1,55 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * libslogic internals: transports (USB, simulated device).
++ * libslogic16u3 internals: transports (USB, simulated device).
 + *
 + * This file is part of SLogic16U3.
 + *
@@ -1060,11 +1060,11 @@ index 00000000..efde1d4c
 +void slogic_sleep_ms(unsigned ms);
 +
 +#endif /* SLOGIC_INTERNAL_H */
-diff --git a/src/hardware/litex-slogic/libslogic/slogic_regs.h b/src/hardware/litex-slogic/libslogic/slogic_regs.h
+diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_regs.h b/src/hardware/litex-slogic/libslogic16u3/slogic_regs.h
 new file mode 100644
-index 00000000..e23552b6
+index 00000000..81616002
 --- /dev/null
-+++ b/src/hardware/litex-slogic/libslogic/slogic_regs.h
++++ b/src/hardware/litex-slogic/libslogic16u3/slogic_regs.h
 @@ -0,0 +1,101 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
@@ -1132,7 +1132,7 @@ index 00000000..e23552b6
 +
 +#define SLOGIC_PATTERN_INPUTS        0
 +#define SLOGIC_PATTERN_COUNTER       1
-+#define SLOGIC_PATTERN_GENERATOR     2 /* Gateware >= 1.1. */
++#define SLOGIC_PATTERN_GENERATOR     2
 +
 +#define SLOGIC_STATUS_RUNNING        (1 << 0)
 +#define SLOGIC_STATUS_DONE           (1 << 1)
@@ -1167,15 +1167,15 @@ index 00000000..e23552b6
 +#define SLOGIC_USB3_PHY_READY        (1 << 9)
 +
 +#endif /* SLOGIC_REGS_H */
-diff --git a/src/hardware/litex-slogic/libslogic/slogic_sim.c b/src/hardware/litex-slogic/libslogic/slogic_sim.c
+diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_sim.c b/src/hardware/litex-slogic/libslogic16u3/slogic_sim.c
 new file mode 100644
-index 00000000..0f737580
+index 00000000..8860f43c
 --- /dev/null
-+++ b/src/hardware/litex-slogic/libslogic/slogic_sim.c
++++ b/src/hardware/litex-slogic/libslogic16u3/slogic_sim.c
 @@ -0,0 +1,498 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * libslogic: simulated device (software model of the gateware), for tests and development without
++ * libslogic16u3: simulated device (software model of the gateware), for tests and development without
 + * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
 + *
 + * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
@@ -1481,7 +1481,7 @@ index 00000000..0f737580
 +    }
 +    switch (addr) {
 +    case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-+    case SLOGIC_ANALYZER_VERSION:   return 0x00010001;
++    case SLOGIC_ANALYZER_VERSION:   return 0x00000001;
 +    case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
 +    case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
 +    case SLOGIC_ANALYZER_CONTROL:   return s->control;
@@ -1671,15 +1671,15 @@ index 00000000..0f737580
 +        return -1;
 +    return ((struct sim *)dev->ctx)->flash_writes_golden;
 +}
-diff --git a/src/hardware/litex-slogic/libslogic/slogic_usb.c b/src/hardware/litex-slogic/libslogic/slogic_usb.c
+diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_usb.c b/src/hardware/litex-slogic/libslogic16u3/slogic_usb.c
 new file mode 100644
-index 00000000..00cbbdcf
+index 00000000..f4102c30
 --- /dev/null
-+++ b/src/hardware/litex-slogic/libslogic/slogic_usb.c
++++ b/src/hardware/litex-slogic/libslogic16u3/slogic_usb.c
 @@ -0,0 +1,347 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * libslogic: USB3 transport (libusb-1.0).
++ * libslogic16u3: USB3 transport (libusb-1.0).
 + *
 + * - EP0: SoC bus accesses with vendor requests (LiteX CommUSB protocol, USB3-PIPE USB3EP0Wishbone):
 + *   bmRequestType 0xc3 (read)/0x43 (write), bRequest 0, wValue/wIndex: address (low/high 16-bit), up to
@@ -2163,7 +2163,7 @@ index 00000000..feeb2b09
 +}
 diff --git a/src/hardware/litex-slogic/protocol.h b/src/hardware/litex-slogic/protocol.h
 new file mode 100644
-index 00000000..13903af9
+index 00000000..8bae692c
 --- /dev/null
 +++ b/src/hardware/litex-slogic/protocol.h
 @@ -0,0 +1,67 @@
@@ -2194,8 +2194,8 @@ index 00000000..13903af9
 +#include <libsigrok/libsigrok.h>
 +#include "libsigrok-internal.h"
 +
-+/* libslogic (BSD-2-Clause): SLogic16U3 LiteX gateware host library. */
-+#include "libslogic/slogic.h"
++/* libslogic16u3 (BSD-2-Clause): SLogic16U3 LiteX gateware host library. */
++#include "libslogic16u3/slogic.h"
 +
 +#define LOG_PREFIX "litex-slogic"
 +
@@ -2203,7 +2203,7 @@ index 00000000..13903af9
 +#define LITEX_SLOGIC_READ_MS    10
 +
 +struct dev_context {
-+	char *conn;                    /* libslogic URI ("usb", "usb:serial=...", "sim"). */
++	char *conn;                    /* libslogic16u3 URI ("usb", "usb:serial=...", "sim"). */
 +	struct slogic_dev *dev;
 +	struct slogic_info info;
 +

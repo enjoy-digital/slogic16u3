@@ -30,7 +30,7 @@ from gateware.generator import PatternGenerator
 # Constants ----------------------------------------------------------------------------------------
 
 ANALYZER_MAGIC   = 0x534c4f47 # "SLOG".
-ANALYZER_VERSION = 0x00010001 # Major[31:16], Minor[15:0] (1.1: pattern generator).
+ANALYZER_VERSION = 0x00000001 # Major[31:16], Minor[15:0] (0.1: beta).
 
 # Analyzer -----------------------------------------------------------------------------------------
 

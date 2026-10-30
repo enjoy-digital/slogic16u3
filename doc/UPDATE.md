@@ -7,8 +7,8 @@ GW5AT multiboot and nothing in this project ever writes it.
 
 | Region            | Content                                              | Written by                                   |
 |-------------------|------------------------------------------------------|----------------------------------------------|
-| 0x000000-0x7fffff | Application bitstream (this gateware or the stock one). | `slogic_util flash update`, `slogic_util dfu update/restore` |
-| 0x800000-0xffffff | Sipeed DFU loader (golden image).                    | Never (refused by libslogic, both paths).    |
+| 0x000000-0x7fffff | Application bitstream (this gateware or the stock one). | `slogic16u3_util flash update`, `slogic16u3_util dfu update/restore` |
+| 0x800000-0xffffff | Sipeed DFU loader (golden image).                    | Never (refused by libslogic16u3, both paths).    |
 
 - At power-up the GW5AT loads the application at 0x000000, a corrupted application fails its check and the
   FPGA falls back to the golden image (DFU loader).
@@ -21,13 +21,13 @@ User guide with a release package: [INSTALL.md](INSTALL.md).
 
 ```sh
 # MODE button -> DFU loader (LED blinks red).
-slogic_util dfu dump slogic16u3-backup.bin       # Full 16MB backup (read twice): keep it private, outside the repository.
-slogic_util dfu update build/gateware/sipeed_slogic16u3.bin --backup slogic16u3-backup.bin
+slogic16u3_util dfu dump slogic16u3-backup.bin       # Full 16MB backup (read twice): keep it private, outside the repository.
+slogic16u3_util dfu update build/gateware/sipeed_slogic16u3.bin --backup slogic16u3-backup.bin
 # Replug: the analyzer enumerates as "SLogic16U3 LiteX" (1d50:605a, 5Gbps).
-slogic_util info
+slogic16u3_util info
 ```
 
-Safety checks (libslogic, both update paths): the image must be a GW5AT-15 bitstream (sync word and IDCODE
+Safety checks (libslogic16u3, both update paths): the image must be a GW5AT-15 bitstream (sync word and IDCODE
 in its header) that fits the application region (`slogic_image_check`); the DFU path needs the full dump of
 the unit, checked against the Flash's DFU loader region (`slogic_dfu_check_backup`), and erases the whole
 application region before programming (no tail of the previous image left), then verifies.
@@ -35,20 +35,20 @@ application region before programming (no tail of the previous image left), then
 ## Remote Update (from our gateware)
 
 ```sh
-slogic_util flash probe                          # Flash pads mapping + JEDEC ID (first time: MSPI pads probed).
-slogic_util flash update build/gateware/sipeed_slogic16u3.bin   # Erase, program, verify (0x000000 only).
+slogic16u3_util flash probe                          # Flash pads mapping + JEDEC ID (first time: MSPI pads probed).
+slogic16u3_util flash update build/gateware/sipeed_slogic16u3.bin   # Erase, program, verify (0x000000 only).
 # Replug to boot the new gateware.
 ```
 
 The update goes through the gateware Flash core (EP0 CSRs + 512-byte buffers, SPI at ~10MHz): a page program per
 EP0 burst. If anything goes wrong (power loss, bad image), the GW5AT boots the DFU loader: update again with
-`slogic_util dfu update`.
+`slogic16u3_util dfu update`.
 
 ## Back to the Stock Firmware
 
 ```sh
 # MODE button -> DFU loader.
-slogic_util dfu restore slogic16u3-backup.bin      # The backup's application region (checked, verified).
+slogic16u3_util dfu restore slogic16u3-backup.bin      # The backup's application region (checked, verified).
 ```
 
 ## Release

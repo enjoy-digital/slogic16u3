@@ -14,7 +14,7 @@ to PulseView:
   endpoints in the fabric (5Gbps).
 - **Simple gateware around the USB3 core**: IDES8 deserializers (800MS/s base), capture core (decimation, 4/8/16
   channel modes, sample-exact limits, overflow detection, test pattern), raw Bulk IN streaming, CSRs over EP0.
-- **Low level C access**: `libslogic` (USB3 transport + a simulated device), `slogic_util`/`slogic_record` tools.
+- **Low level C access**: `libslogic16u3` (USB3 transport + a simulated device), `slogic16u3_util`/`slogic16u3_record` tools.
 - **sigrok/PulseView**: native libsigrok driver (`litex-slogic`), **ngscopeclient**: TwinLan bridge + scopehal
   driver.
 - **Remote update, never bricked**: Flash update from the gateware (pads probed at runtime) or through the Sipeed
@@ -61,18 +61,18 @@ Details: [doc/GATEWARE.md](doc/GATEWARE.md) (clocks, cores, registers, resources
 | | |
 |:---:|:---:|
 | [![Software stack](doc/images/slogic_16u3-software.jpg)](doc/images/slogic_16u3-software.jpg) | [![Capture](doc/images/slogic_16u3-capture.jpg)](doc/images/slogic_16u3-capture.jpg) |
-| libslogic (C) → tools, sigrok/PulseView, ngscopeclient. | Raw samples streamed over USB3. |
+| libslogic16u3 (C) → tools, sigrok/PulseView, ngscopeclient. | Raw samples streamed over USB3. |
 
 ```sh
-make -C software/user && make -C software/user check     # libslogic, tools, unit tests.
-software/user/build/slogic_util info
-software/user/build/slogic_util check                    # Self-test (counter + pattern generator, all modes/rates).
-software/user/build/slogic_record -r 100M -c 16 -n 1M -o capture.vcd
+make -C software/user && make -C software/user check     # libslogic16u3, tools, unit tests.
+software/user/build/slogic16u3_util info
+software/user/build/slogic16u3_util check                    # Self-test (counter + pattern generator, all modes/rates).
+software/user/build/slogic16u3_record -r 100M -c 16 -n 1M -o capture.vcd
 
 software/sigrok/build.sh --pulseview                     # libsigrok + litex-slogic, sigrok-cli, PulseView.
 software/sigrok/install/bin/sigrok-cli -d litex-slogic -c samplerate=100M --samples 1M -P uart:rx=CH0 -A uart
 
-software/user/build/slogic_scopehal_bridge               # ngscopeclient: driver "slogic", twinlan localhost:5025:5026.
+software/user/build/slogic16u3_scopehal_bridge               # ngscopeclient: driver "slogic", twinlan localhost:5025:5026.
 ```
 
 Add `-d sim` (tools) or `conn=sim` (sigrok) to run on the simulated device. Details:
@@ -101,12 +101,12 @@ python3 -m pytest test                        # Gateware/system/host tests (Mige
 ./slogic_16u3.py --load                       # SRAM load over JTAG (JST SH connector, FT2232: openFPGALoader).
 
 # First install (MODE button: DFU loader, LED blinking red):
-software/user/build/slogic_util dfu dump slogic16u3-backup.bin
-software/user/build/slogic_util dfu update build/gateware/sipeed_slogic16u3.bin --backup slogic16u3-backup.bin
+software/user/build/slogic16u3_util dfu dump slogic16u3-backup.bin
+software/user/build/slogic16u3_util dfu update build/gateware/sipeed_slogic16u3.bin --backup slogic16u3-backup.bin
 # Then remote updates from our gateware:
-software/user/build/slogic_util flash update build/gateware/sipeed_slogic16u3.bin
+software/user/build/slogic16u3_util flash update build/gateware/sipeed_slogic16u3.bin
 # Back to the stock firmware (MODE button):
-software/user/build/slogic_util dfu restore slogic16u3-backup.bin
+software/user/build/slogic16u3_util dfu restore slogic16u3-backup.bin
 ./scripts/release.py 0.1.0                    # Release package (gateware, Linux tools, udev, INSTALL.md).
 ```
 
@@ -128,7 +128,7 @@ This project adds GW5AT-15 support to LiteICLink/USB3-PIPE and completes the SLo
 - [doc/PLAN.md](doc/PLAN.md): phases, status, open questions, ideas.
 - [doc/HARDWARE.md](doc/HARDWARE.md): what is known (and missing) about the hardware.
 - [doc/GATEWARE.md](doc/GATEWARE.md): clocks, cores, capture datapath, registers, resources/timings.
-- [doc/SOFTWARE.md](doc/SOFTWARE.md): libslogic, tools, sigrok/PulseView, ngscopeclient, tests.
+- [doc/SOFTWARE.md](doc/SOFTWARE.md): libslogic16u3, tools, sigrok/PulseView, ngscopeclient, tests.
 - [doc/INSTALL.md](doc/INSTALL.md): user guide: backup, install over DFU, update, back to the stock firmware.
 - [doc/UPDATE.md](doc/UPDATE.md): flash layout, first install, remote update, recovery, release.
 
@@ -140,5 +140,5 @@ This project adds GW5AT-15 support to LiteICLink/USB3-PIPE and completes the SLo
 
 ## License
 
-BSD-2-Clause (gateware, libslogic, tools, bridge). The libsigrok driver is GPL-3.0-or-later (libsigrok), the
+BSD-2-Clause (gateware, libslogic16u3, tools, bridge). The libsigrok driver is GPL-3.0-or-later (libsigrok), the
 scopehal driver BSD-3-Clause (libscopehal).

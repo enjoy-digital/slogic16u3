@@ -64,7 +64,7 @@
 
 #define SLOGIC_PATTERN_INPUTS        0
 #define SLOGIC_PATTERN_COUNTER       1
-#define SLOGIC_PATTERN_GENERATOR     2 /* Gateware >= 1.1. */
+#define SLOGIC_PATTERN_GENERATOR     2
 
 #define SLOGIC_STATUS_RUNNING        (1 << 0)
 #define SLOGIC_STATUS_DONE           (1 << 1)

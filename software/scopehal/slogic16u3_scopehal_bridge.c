@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * slogic_scopehal_bridge: SLogic16U3 to ngscopeclient/libscopehal bridge (TwinLan transport).
+ * slogic16u3_scopehal_bridge: SLogic16U3 to ngscopeclient/libscopehal bridge (TwinLan transport).
  *
- *   slogic_scopehal_bridge [-d uri] [--scpi-port 5025] [--waveform-port 5026]
+ *   slogic16u3_scopehal_bridge [-d uri] [--scpi-port 5025] [--waveform-port 5026]
  *   ngscopeclient: add instrument, driver "slogic", transport "twinlan", path "localhost:5025:5026".
  *
  * Control port: SCPI lines (libscopehal RemoteBridgeOscilloscope command set):
@@ -391,8 +391,8 @@ out:
 
 static void help(void)
 {
-    printf("slogic_scopehal_bridge " SLOGIC_VERSION_STRING ": SLogic16U3 to ngscopeclient bridge.\n"
-           "usage: slogic_scopehal_bridge [-d uri] [--scpi-port N] [--waveform-port N]\n");
+    printf("slogic16u3_scopehal_bridge " SLOGIC_VERSION_STRING ": SLogic16U3 to ngscopeclient bridge.\n"
+           "usage: slogic16u3_scopehal_bridge [-d uri] [--scpi-port N] [--waveform-port N]\n");
 }
 
 int main(int argc, char **argv)
