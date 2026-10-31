@@ -47,6 +47,11 @@
 #define SLOGIC_ANALYZER_STATUS       (SLOGIC_ANALYZER_BASE + 0x20)
 #define SLOGIC_ANALYZER_COUNT        (SLOGIC_ANALYZER_BASE + 0x24) /* 64-bit. */
 #define SLOGIC_ANALYZER_CLK_COUNT    (SLOGIC_ANALYZER_BASE + 0x2c)
+#define SLOGIC_ANALYZER_TRIGGER      (SLOGIC_ANALYZER_BASE + 0x30)
+#define SLOGIC_ANALYZER_TRIGGER_LEVEL (SLOGIC_ANALYZER_BASE + 0x34) /* zero[15:0], one[31:16]. */
+#define SLOGIC_ANALYZER_TRIGGER_EDGE (SLOGIC_ANALYZER_BASE + 0x38) /* rising[15:0], falling[31:16]. */
+#define SLOGIC_ANALYZER_PRETRIGGER   (SLOGIC_ANALYZER_BASE + 0x3c) /* 64-bit words. */
+#define SLOGIC_ANALYZER_TRIGGER_COUNT (SLOGIC_ANALYZER_BASE + 0x40) /* 64-bit. */
 
 #define SLOGIC_MAGIC                 0x534c4f47 /* "SLOG". */
 
@@ -70,6 +75,10 @@
 #define SLOGIC_STATUS_DONE           (1 << 1)
 #define SLOGIC_STATUS_OVERFLOW       (1 << 2)
 #define SLOGIC_STATUS_ERROR          (1 << 3)
+#define SLOGIC_STATUS_TRIGGERED      (1 << 4)
+
+#define SLOGIC_TRIGGER_ENABLE        (1 << 0)
+#define SLOGIC_PRETRIGGER_MARGIN     64 /* FIFO words (gateware/analyzer.py). */
 
 /* Flash */
 /*-------*/

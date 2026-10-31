@@ -68,10 +68,10 @@ class TestRegs(unittest.TestCase):
                 continue
             self.assertEqual(value, regs[csr][0], csr)
             checked += 1
-        self.assertGreaterEqual(checked, 18)
+        self.assertGreaterEqual(checked, 23)
 
         # 64-bit registers.
-        for csr in ["analyzer_limit", "analyzer_count"]:
+        for csr in ["analyzer_limit", "analyzer_count", "analyzer_trigger_count"]:
             self.assertEqual(regs[csr][1], 2, csr)
 
         # Flash buffer.

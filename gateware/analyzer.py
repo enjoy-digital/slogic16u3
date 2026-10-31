@@ -12,6 +12,11 @@
 - Control (quasi-static configuration, enable) resynchronized to the sample clock domain, status and
   counters resynchronized to sys (counters: stable once the capture is done).
 - start: rising edge of the capture enable in sys (to flush the stale data of the USB3 Bulk IN).
+- Trigger/pre-trigger window: the FIFO is the pre-trigger buffer. While armed, the FIFO output is not
+  forwarded and its oldest words are dropped (FIFO level kept under pretrigger + PRETRIGGER_MARGIN words).
+  Once the trigger status reaches sys, the words before word W - pretrigger are dropped (W: word of the
+  trigger sample, packing contiguous from the capture start) and the stream is forwarded: the stream
+  starts at word max(0, W - pretrigger), the host computes the trigger offset from trigger_count.
 - Sample clock counter (Gray coded, 32-bit): sample clock frequency measured by the host against its own
   time base (the sample clock accuracy is the samplerate accuracy).
 """
@@ -30,7 +35,9 @@ from gateware.generator import PatternGenerator
 # Constants ----------------------------------------------------------------------------------------
 
 ANALYZER_MAGIC   = 0x534c4f47 # "SLOG".
-ANALYZER_VERSION = 0x00000001 # Major[31:16], Minor[15:0] (0.1: beta).
+ANALYZER_VERSION = 0x00000002 # Major[31:16], Minor[15:0] (0.2: hardware trigger).
+
+PRETRIGGER_MARGIN = 64 # FIFO words kept above the pre-trigger window while armed (CDC/status latency).
 
 # Analyzer -----------------------------------------------------------------------------------------
 
@@ -68,22 +75,29 @@ class Analyzer(LiteXModule):
         self.divider = Signal(32, reset=1)
         self.pattern = Signal(2)
         self.limit   = Signal(48)
-        if cd == "sys":
-            self.comb += [
-                capture.enable.eq(self.enable),
-                capture.mode.eq(self.mode),
-                capture.divider.eq(self.divider),
-                capture.pattern.eq(self.pattern),
-                capture.limit.eq(self.limit),
-            ]
-        else:
-            self.specials += [
-                MultiReg(self.enable,  capture.enable,  cd),
-                MultiReg(self.mode,    capture.mode,    cd),
-                MultiReg(self.divider, capture.divider, cd),
-                MultiReg(self.pattern, capture.pattern, cd),
-                MultiReg(self.limit,   capture.limit,   cd),
-            ]
+        self.trigger_enable  = Signal()
+        self.trigger_zero    = Signal(nchannels)
+        self.trigger_one     = Signal(nchannels)
+        self.trigger_rising  = Signal(nchannels)
+        self.trigger_falling = Signal(nchannels)
+        self.pretrigger      = Signal(16) # Pre-trigger window (64-bit words).
+        controls = [
+            (self.enable,          capture.enable),
+            (self.mode,            capture.mode),
+            (self.divider,         capture.divider),
+            (self.pattern,         capture.pattern),
+            (self.limit,           capture.limit),
+            (self.trigger_enable,  capture.trigger_enable),
+            (self.trigger_zero,    capture.trigger_zero),
+            (self.trigger_one,     capture.trigger_one),
+            (self.trigger_rising,  capture.trigger_rising),
+            (self.trigger_falling, capture.trigger_falling),
+        ]
+        for i, o in controls:
+            if cd == "sys":
+                self.comb += o.eq(i)
+            else:
+                self.specials += MultiReg(i, o, cd)
         enable_d = Signal()
         self.sync += enable_d.eq(self.enable)
         self.comb += self.start.eq(self.enable & ~enable_d)
@@ -94,6 +108,8 @@ class Analyzer(LiteXModule):
         self.overflow = Signal()
         self.error    = Signal()
         self.count    = Signal(64)
+        self.triggered     = Signal()
+        self.trigger_count = Signal(64)
         status = Cat(capture.running, capture.done, capture.overflow, capture.error)
         if cd == "sys":
             self.comb += [
@@ -108,6 +124,26 @@ class Analyzer(LiteXModule):
                 self.count.eq(count_sync.o),
             ]
 
+        # Trigger status (cd -> sys): consistent snapshot of trigger_count/triggered/gen, accepted for the
+        # current capture only (gen: toggled on each start in both domains).
+        trig_status = Cat(capture.trigger_count, capture.triggered, capture.gen)
+        trig_sys    = Signal(len(trig_status))
+        if cd == "sys":
+            self.comb += trig_sys.eq(trig_status)
+        else:
+            self.trig_sync = trig_sync = BusSynchronizer(len(trig_status), cd, "sys")
+            self.comb += [
+                trig_sync.i.eq(trig_status),
+                trig_sys.eq(trig_sync.o),
+            ]
+        cbits = len(capture.trigger_count)
+        gen   = Signal()
+        self.sync += If(self.start, gen.eq(~gen))
+        self.comb += [
+            self.triggered.eq(trig_sys[cbits] & (trig_sys[cbits + 1] == gen)),
+            self.trigger_count.eq(trig_sys[:cbits]),
+        ]
+
         # Data Path --------------------------------------------------------------------------------
         layout = [("data", data_width)]
         if cd == "sys":
@@ -121,7 +157,60 @@ class Analyzer(LiteXModule):
         self.comb += [
             fifo.reset.eq(self.start),
             cdc_source.connect(fifo.sink),
-            fifo.source.connect(source),
+        ]
+
+        # Pre-trigger window -----------------------------------------------------------------------
+        # head: FIFO words read (forwarded or dropped) since the start, target: first word of the
+        # window (registered from the trigger status, valid with trig_ok, 2 cycles after triggered).
+        head      = Signal(cbits)
+        trig_word = Signal(cbits)
+        target    = Signal(cbits)
+        trig_d    = Signal(2)
+        trig_ok   = Signal()
+        forward   = Signal()
+        drop      = Signal()
+        threshold = Signal(17)
+        spw_log2  = {0: 4, 1: 3, 2: 2} # log2(samples per 64-bit word) per channel mode.
+        assert data_width == 64
+        self.sync += [
+            Case(self.mode, {
+                0         : trig_word.eq(self.trigger_count[spw_log2[0]:]),
+                1         : trig_word.eq(self.trigger_count[spw_log2[1]:]),
+                "default" : trig_word.eq(self.trigger_count[spw_log2[2]:]),
+            }),
+            If(trig_word >= self.pretrigger,
+                target.eq(trig_word - self.pretrigger)
+            ).Else(
+                target.eq(0)
+            ),
+            trig_d.eq(Cat(self.triggered & ~self.start, trig_d[0] & self.triggered & ~self.start)),
+            threshold.eq(self.pretrigger + PRETRIGGER_MARGIN),
+        ]
+        self.comb += [
+            trig_ok.eq(trig_d[1]),
+            If(trig_ok,
+                drop.eq(head < target)
+            ).Else(
+                drop.eq(fifo.level > threshold)
+            ),
+            If(forward,
+                fifo.source.connect(source)
+            ).Else(
+                fifo.source.ready.eq(drop)
+            ),
+        ]
+        self.sync += [
+            If(self.start,
+                head.eq(0),
+                forward.eq(~self.trigger_enable),
+            ).Else(
+                If(fifo.source.valid & fifo.source.ready,
+                    head.eq(head + 1)
+                ),
+                If(trig_ok & ~drop,
+                    forward.eq(1)
+                )
+            )
         ]
 
         # Sample Clock Counter ---------------------------------------------------------------------
@@ -175,9 +264,25 @@ class Analyzer(LiteXModule):
             CSRField("done",     size=1, offset=1),
             CSRField("overflow", size=1, offset=2, description="Data lost (host too slow): capture stopped."),
             CSRField("error",    size=1, offset=3, description="Invalid configuration (> 32 bits/cycle)."),
+            CSRField("triggered", size=1, offset=4, description="Hardware trigger matched (trigger_count valid)."),
         ])
         self._count     = CSRStatus(64, description="Captured samples.")
         self._clk_count = CSRStatus(32, description="Sample clock cycles (free running).")
+
+        # Trigger (appended: the registers above keep their addresses).
+        self._trigger = CSRStorage(fields=[
+            CSRField("enable", size=1, offset=0, description="Hardware trigger enable (capture armed until the trigger)."),
+        ])
+        self._trigger_level = CSRStorage(fields=[
+            CSRField("zero", size=16, offset=0,  description="Channels low."),
+            CSRField("one",  size=16, offset=16, description="Channels high."),
+        ])
+        self._trigger_edge = CSRStorage(fields=[
+            CSRField("rising",  size=16, offset=0,  description="Channels rising (rising + falling: any edge)."),
+            CSRField("falling", size=16, offset=16, description="Channels falling."),
+        ])
+        self._pretrigger    = CSRStorage(16, description="Pre-trigger window (64-bit words, < FIFO depth - 2*margin).")
+        self._trigger_count = CSRStatus(64,  description="Trigger sample index in the capture (valid when triggered).")
         self.comb += [
             self.enable.eq(self._control.fields.enable),
             self.mode.eq(self._control.fields.mode),
@@ -190,4 +295,12 @@ class Analyzer(LiteXModule):
             self._status.fields.error.eq(self.error),
             self._count.status.eq(self.count),
             self._clk_count.status.eq(self.clk_count),
+            self.trigger_enable.eq(self._trigger.fields.enable),
+            self.trigger_zero.eq(self._trigger_level.fields.zero),
+            self.trigger_one.eq(self._trigger_level.fields.one),
+            self.trigger_rising.eq(self._trigger_edge.fields.rising),
+            self.trigger_falling.eq(self._trigger_edge.fields.falling),
+            self.pretrigger.eq(self._pretrigger.storage),
+            self._status.fields.triggered.eq(self.triggered),
+            self._trigger_count.status.eq(self.trigger_count),
         ]

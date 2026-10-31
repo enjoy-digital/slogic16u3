@@ -139,3 +139,24 @@ class TestSystem(unittest.TestCase):
             self.assertEqual(status & 0b1110, 0b0010) # done, no overflow/error.
             self.assertEqual((yield from csr_read(soc, host, "analyzer_count", n=2)), limit)
         self.run_system(scenario)
+
+    def test_trigger_capture(self):
+        # 16 channels, divider 4, counter pattern (sample i = 4*i): level trigger on 0x0190 (sample
+        # 100), 10 words of pre-trigger (from sample 60), 200 samples from the trigger cycle (to 300).
+        divider, mode, value = 4, 2, 0x0190
+        def scenario(soc, host):
+            yield from csr_write(soc, host, "analyzer_divider", divider)
+            yield from csr_write(soc, host, "analyzer_limit", 200, n=2)
+            yield from csr_write(soc, host, "analyzer_trigger_level", ((value << 16) | (~value & 0xffff)))
+            yield from csr_write(soc, host, "analyzer_pretrigger", 10)
+            yield from csr_write(soc, host, "analyzer_trigger", 1)
+            yield from csr_write(soc, host, "analyzer_control", (mode << 4) | (1 << 8) | 1)
+            packets, _ = yield from pyhost_bulk_in(host, ept=1, count=1)
+            data  = [b for p in packets for b in p]
+            words = [int.from_bytes(bytes(data[i:i+8]), "little") for i in range(0, len(data), 8)]
+            self.assertEqual(unpack(words, mode, 240), [(4*i) & 0xffff for i in range(60, 300)])
+            status = yield from csr_read(soc, host, "analyzer_status")
+            self.assertEqual(status & 0b11110, 0b10010) # done, triggered, no overflow/error.
+            self.assertEqual((yield from csr_read(soc, host, "analyzer_trigger_count", n=2)), 100)
+            self.assertEqual((yield from csr_read(soc, host, "analyzer_count", n=2)), 300)
+        self.run_system(scenario)
