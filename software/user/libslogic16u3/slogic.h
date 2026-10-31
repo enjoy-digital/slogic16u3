@@ -92,11 +92,25 @@ int slogic_measure_sample_clock(struct slogic_dev *dev, unsigned duration_ms, do
 /* Capture */
 /*---------*/
 
+/* Hardware trigger (gateware >= 0.2): single stage, bit n: CHn, all the channels ANDed (channels without
+ * condition: don't care, rising + falling: any edge). */
+struct slogic_trigger {
+    uint16_t zero;             /* Channels low. */
+    uint16_t one;              /* Channels high. */
+    uint16_t rising;           /* Channels rising (previous sample low, this one high). */
+    uint16_t falling;          /* Channels falling. */
+};
+
 struct slogic_config {
     uint64_t samplerate;       /* Hz: base_rate/divider. */
     unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
-    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
+    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). With the trigger:
+                                * samples from the trigger sample (included). */
     unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator. */
+    int      trigger_enable;   /* Hardware trigger: nothing is streamed until it matches. */
+    struct slogic_trigger trigger;
+    uint64_t pretrigger;       /* Samples kept before the trigger (<= slogic_max_pretrigger(), at least
+                                * this many unless the trigger comes earlier). */
 };
 
 struct slogic_status {
@@ -106,6 +120,10 @@ struct slogic_status {
     int      error;            /* Invalid configuration. */
     uint64_t samples;          /* Captured samples. */
     uint64_t bytes;            /* Bytes received by the host. */
+    int      triggered;        /* Hardware trigger matched. */
+    uint64_t trigger_sample;   /* Trigger sample index in the capture (since the start). */
+    uint64_t trigger_offset;   /* Trigger sample index in the stream (samples returned by
+                                * slogic_capture_read: the pre-trigger samples come first). */
 };
 
 /* Configuration check: SLOGIC_OK or SLOGIC_ERR_ARG (msg: reason, may be NULL). */
@@ -116,9 +134,17 @@ int slogic_samplerates(const struct slogic_info *info, unsigned channels, uint64
 /* Maximum samplerate supported by the gateware datapath for a channel count. */
 uint64_t slogic_max_samplerate(const struct slogic_info *info, unsigned channels);
 
+/* Hardware trigger support (gateware >= 0.2) and maximum pre-trigger samples for a channel count. */
+int      slogic_has_trigger(const struct slogic_info *info);
+uint64_t slogic_max_pretrigger(const struct slogic_info *info, unsigned channels);
+/* Trigger from a sigrok like string: "CH1=f,CH6=1,CH7=0,CH0=r,CH3=e" (0/1: level, r/f/e: rising/
+ * falling/any edge), SLOGIC_OK or SLOGIC_ERR_ARG. */
+int      slogic_trigger_parse(const char *s, struct slogic_trigger *trigger);
+
 int slogic_capture_start(struct slogic_dev *dev, const struct slogic_config *config);
-/* Next data buffer (valid until the next call): SLOGIC_OK, SLOGIC_ERR_TIMEOUT, SLOGIC_ERR_END (capture
- * done, all data read), SLOGIC_ERR_OVERFLOW or a transport error. */
+/* Next data buffer (valid until the next call): SLOGIC_OK, SLOGIC_ERR_TIMEOUT (no data yet: also while
+ * waiting for the trigger), SLOGIC_ERR_END (capture done, all data read), SLOGIC_ERR_OVERFLOW or a
+ * transport error. With the trigger, the status gives the trigger position once data is received. */
 int slogic_capture_read(struct slogic_dev *dev, const uint8_t **data, size_t *size, int timeout_ms);
 int slogic_capture_stop(struct slogic_dev *dev, struct slogic_status *status);
 int slogic_capture_status(struct slogic_dev *dev, struct slogic_status *status);

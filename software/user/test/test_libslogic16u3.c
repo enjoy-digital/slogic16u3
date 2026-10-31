@@ -368,6 +368,116 @@ static void test_flash(void)
     slogic_close(dev);
 }
 
+/* Hardware trigger (sim, as the gateware): pattern generator, trigger position, window, samples. */
+static int trigger_capture(struct slogic_dev *dev, const struct slogic_config *cfg, uint8_t **out,
+                           uint64_t *nsamples, struct slogic_status *st)
+{
+    size_t cap = slogic_packed_bytes(cfg->channels, cfg->limit + cfg->pretrigger + 64) + 8;
+    const uint8_t *data;
+    size_t n, total = 0;
+    int r, tries = 0;
+
+    *out      = calloc(1, cap);
+    *nsamples = 0;
+    if ((r = slogic_capture_start(dev, cfg)))
+        return r;
+    while ((r = slogic_capture_read(dev, &data, &n, 100)) == SLOGIC_OK || (r == SLOGIC_ERR_TIMEOUT && ++tries < 50)) {
+        if (r)
+            continue;
+        if (total + n > cap)
+            return SLOGIC_ERR_ARG;
+        memcpy(*out + total, data, n);
+        total += n;
+    }
+    slogic_capture_status(dev, st);
+    slogic_capture_stop(dev, NULL);
+    *nsamples = total*8/cfg->channels;
+    return r == SLOGIC_ERR_END ? SLOGIC_OK : r;
+}
+
+static void check_trigger(unsigned channels, uint64_t rate, const char *cond, uint64_t pre, uint64_t limit,
+                          uint64_t expected)
+{
+    struct slogic_dev *dev = open_sim("sim:fast");
+    struct slogic_info info;
+    struct slogic_config c = { .channels = channels, .samplerate = rate, .limit = limit,
+                               .pattern = SLOGIC_PATTERN_GENERATOR, .trigger_enable = 1, .pretrigger = pre };
+    struct slogic_status st;
+    uint8_t *data;
+    uint64_t n;
+
+    CHECK_OK(slogic_get_info(dev, &info));
+    CHECK_OK(slogic_trigger_parse(cond, &c.trigger));
+    CHECK_OK(trigger_capture(dev, &c, &data, &n, &st));
+    CHECK(st.triggered);
+    CHECK(st.trigger_sample == expected);
+    CHECK(st.trigger_offset >= (pre < expected ? pre : expected));
+    CHECK(st.trigger_offset <= pre + 64/channels);
+    CHECK(n == st.trigger_offset + limit);
+    /* Samples: generator from the first streamed sample. */
+    uint64_t divider = info.base_rate/rate, first = st.trigger_sample - st.trigger_offset, bad = 0;
+    unsigned unit = slogic_unitsize(channels);
+    uint8_t *u = malloc(n*unit);
+    slogic_unpack(channels, data, 0, n, u);
+    for (uint64_t i = 0; i < n; i++) {
+        uint32_t v = unit == 2 ? (uint32_t)(u[2*i] | u[2*i + 1] << 8) : u[i];
+        if (v != (slogic_generator_sample((first + i)*divider) & ((1u << channels) - 1)))
+            bad++;
+    }
+    CHECK(bad == 0);
+    free(u);
+    free(data);
+    slogic_close(dev);
+}
+
+static void test_trigger(void)
+{
+    /* CH1 (SPI CS#) first falling edge: cycle 512 (16 channels at 200MS/s: sample 1024). */
+    check_trigger(16, 200000000, "CH1=f", 1000, 5000, 1024);
+    /* Gray counter on CH6-CH15 = gray(700) and CH5 (clock) high: cycle 700, second half (sample 1401). */
+    uint16_t g = 700 ^ (700 >> 1);
+    char cond[256];
+    int n = snprintf(cond, sizeof(cond), "CH5=1");
+    for (int b = 0; b < 10; b++)
+        n += snprintf(cond + n, sizeof(cond) - n, ",CH%d=%d", 6 + b, (g >> b) & 1);
+    check_trigger(16, 200000000, cond, 200, 300, 1401);
+    /* CH0 UART first start bit (cycle 200): 4 channels at 800MS/s (sample 1600), max pre-trigger. */
+    check_trigger(4, 800000000, "CH0=f", 30720, 1000, 1600);
+    /* Any edge on CH3 (SPI MOSI, first rising: "S" = 0x53, bit 6 at cycle 8): 8 channels at 400MS/s. */
+    check_trigger(8, 400000000, "CH3=e", 0, 100, 32);
+
+    /* Configuration checks. */
+    struct slogic_dev *dev = open_sim("sim:fast");
+    struct slogic_info info;
+    char msg[160];
+    CHECK_OK(slogic_get_info(dev, &info));
+    CHECK(slogic_has_trigger(&info));
+    CHECK(slogic_max_pretrigger(&info, 16) == 1920*4);
+    struct slogic_config c = { .channels = 4, .samplerate = 100000000, .trigger_enable = 1 };
+    CHECK_OK(slogic_trigger_parse("CH3=r,CH0=1", &c.trigger));
+    CHECK(c.trigger.rising == 0x8 && c.trigger.one == 0x1);
+    CHECK(slogic_trigger_parse("CH16=1", &c.trigger) == SLOGIC_ERR_ARG);
+    CHECK(slogic_trigger_parse("CH1=x", &c.trigger) == SLOGIC_ERR_ARG);
+    CHECK_OK(slogic_trigger_parse("CH4=1", &c.trigger));
+    CHECK(slogic_config_check(&info, &c, msg, sizeof(msg)) == SLOGIC_ERR_ARG); /* CH4 with 4 channels. */
+    CHECK_OK(slogic_trigger_parse("CH1=1", &c.trigger));
+    c.pretrigger = slogic_max_pretrigger(&info, 4) + 1;
+    CHECK(slogic_config_check(&info, &c, msg, sizeof(msg)) == SLOGIC_ERR_ARG);
+
+    /* Never matching (SCK high while CS# high): nothing streamed, stopped while armed. */
+    struct slogic_config cn = { .channels = 16, .samplerate = 100000000, .limit = 1000, .trigger_enable = 1,
+                                .pattern = SLOGIC_PATTERN_GENERATOR };
+    struct slogic_status st;
+    const uint8_t *data;
+    size_t size;
+    CHECK_OK(slogic_trigger_parse("CH1=1,CH2=1", &cn.trigger));
+    CHECK_OK(slogic_capture_start(dev, &cn));
+    CHECK(slogic_capture_read(dev, &data, &size, 50) == SLOGIC_ERR_TIMEOUT);
+    CHECK_OK(slogic_capture_stop(dev, &st));
+    CHECK(!st.triggered);
+    slogic_close(dev);
+}
+
 int main(void)
 {
     test_info();
@@ -379,6 +489,7 @@ int main(void)
     test_overflow();
     test_unpack();
     test_flash();
+    test_trigger();
     printf("libslogic16u3 tests: %d checks, %d failure(s)\n", checks, failures);
     return failures ? 1 : 0;
 }

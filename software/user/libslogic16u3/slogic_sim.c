@@ -10,6 +10,8 @@
  *   the gateware (32-bit packer, last word
  *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
  *   (overflow when the capture needs more, after the FIFO).
+ * - Hardware trigger (as the gateware): nothing streamed until the trigger, then the stream starts at
+ *   word max(0, W - pretrigger) (W: word of the trigger sample), limit counted from the trigger cycle.
  * - Flash: 16MB SPI Flash (W25Q128-like: JEDEC ID ef 40 18) on hidden pads (pins), golden image area
  *   (0x800000-) filled with 0xa5.
  *
@@ -36,6 +38,7 @@
 #define SIM_FIFO_WORDS  2048
 #define SIM_BUF_SIZE    (256*1024)
 #define SIM_FLASH_SIZE  (16*1024*1024)
+#define SIM_SEARCH      (1 << 22) /* Samples searched for the trigger per read (fast mode). */
 #define SIM_IDENT       "SLogic16U3 LiteX (simulated device)"
 
 /* Context */
@@ -54,6 +57,12 @@ struct sim {
     uint32_t control, divider, status;
     uint64_t limit, count;
     double   t0;
+    /* Trigger. */
+    uint32_t trigger, trigger_level, trigger_edge, pretrigger;
+    int      armed;
+    uint64_t search;      /* Next sample searched for the trigger. */
+    uint64_t trigger_count;
+    uint64_t end;         /* Capture end (samples, 0: none). */
     /* Stream. */
     int      streaming, ended, overflow_after_words;
     uint64_t sample;      /* Next captured sample index. */
@@ -220,6 +229,9 @@ static void sim_start(struct sim *s)
     s->ended      = 0;
     s->status     = SLOGIC_STATUS_RUNNING;
     s->t_start    = slogic_time();
+    s->armed      = !!(s->trigger & SLOGIC_TRIGGER_ENABLE);
+    s->search     = 0;
+    s->end        = s->armed ? 0 : s->limit;
     /* Invalid configuration: more than 32 bits per sample clock cycle. */
     unsigned d = s->divider ? s->divider : 1;
     if (((SIM_RATIO + d - 1)/d)*ch > 32) {
@@ -245,7 +257,7 @@ static size_t sim_generate(struct sim *s, uint8_t *out, size_t max, int *last)
         int words = 0, flush = 0;
         for (int k = 0; k < 2; k++) {
             while (running && s->pack_bits < 32) {
-                if (s->limit && s->sample >= s->limit) {
+                if (s->end && s->sample >= s->end) {
                     running = 0;
                     break;
                 }
@@ -291,6 +303,57 @@ static size_t sim_generate(struct sim *s, uint8_t *out, size_t max, int *last)
     return n;
 }
 
+/* Trigger */
+/*---------*/
+
+static int sim_trigger_match(const struct sim *s, uint64_t i)
+{
+    unsigned ch      = sim_channels(s);
+    uint16_t mask    = (uint16_t)((1u << ch) - 1);
+    uint16_t zero    = (uint16_t)(s->trigger_level & mask);
+    uint16_t one     = (uint16_t)((s->trigger_level >> 16) & mask);
+    uint16_t rising  = (uint16_t)(s->trigger_edge & mask);
+    uint16_t falling = (uint16_t)((s->trigger_edge >> 16) & mask);
+    uint16_t edges   = rising | falling;
+    uint16_t v       = sim_sample(s, i);
+    if ((v & zero) || (~v & one))
+        return 0;
+    if (edges) {
+        if (i == 0)
+            return 0;
+        uint16_t p  = sim_sample(s, i - 1);
+        uint16_t ok = (rising & ~p & v) | (falling & p & ~v);
+        if (edges & ~ok)
+            return 0;
+    }
+    return 1;
+}
+
+/* Search the trigger up to sample upto: stream window set when found. */
+static int sim_trigger_search(struct sim *s, uint64_t upto)
+{
+    for (; s->search < upto; s->search++) {
+        if (!sim_trigger_match(s, s->search))
+            continue;
+        uint64_t t   = s->search;
+        unsigned spw = 64/sim_channels(s);
+        uint64_t d   = s->divider ? s->divider : 1;
+        uint64_t w   = t/spw;
+        uint64_t f   = (w > s->pretrigger ? w - s->pretrigger : 0)*spw;
+        uint64_t c0  = (t*d/SIM_RATIO*SIM_RATIO + d - 1)/d; /* First sample of the trigger cycle. */
+        s->armed         = 0;
+        s->trigger_count = t;
+        s->status       |= SLOGIC_STATUS_TRIGGERED;
+        s->sample        = f;
+        s->count         = f;
+        s->end           = s->limit ? c0 + s->limit : 0;
+        s->t_start      += (double)f*d/SIM_BASE_RATE; /* Paced from the first streamed sample. */
+        return 1;
+    }
+    s->count = s->search;
+    return 0;
+}
+
 /* Bus */
 /*-----*/
 
@@ -306,7 +369,7 @@ static uint32_t sim_read(struct sim *s, uint32_t addr)
     }
     switch (addr) {
     case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-    case SLOGIC_ANALYZER_VERSION:   return 0x00000001;
+    case SLOGIC_ANALYZER_VERSION:   return 0x00000002;
     case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
     case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
     case SLOGIC_ANALYZER_CONTROL:   return s->control;
@@ -317,6 +380,12 @@ static uint32_t sim_read(struct sim *s, uint32_t addr)
     case SLOGIC_ANALYZER_COUNT:     return (uint32_t)(s->count >> 32);
     case SLOGIC_ANALYZER_COUNT + 4: return (uint32_t)s->count;
     case SLOGIC_ANALYZER_CLK_COUNT: return (uint32_t)((slogic_time() - s->t0)*SIM_SAMPLE_CLK);
+    case SLOGIC_ANALYZER_TRIGGER:       return s->trigger;
+    case SLOGIC_ANALYZER_TRIGGER_LEVEL: return s->trigger_level;
+    case SLOGIC_ANALYZER_TRIGGER_EDGE:  return s->trigger_edge;
+    case SLOGIC_ANALYZER_PRETRIGGER:    return s->pretrigger;
+    case SLOGIC_ANALYZER_TRIGGER_COUNT:     return (uint32_t)(s->trigger_count >> 32);
+    case SLOGIC_ANALYZER_TRIGGER_COUNT + 4: return (uint32_t)s->trigger_count;
     case SLOGIC_FLASH_CONTROL:      return s->flash_control;
     case SLOGIC_FLASH_DIVIDER:      return s->flash_divider;
     case SLOGIC_FLASH_XFER:         return s->flash_xfer;
@@ -346,6 +415,10 @@ static void sim_write(struct sim *s, uint32_t addr, uint32_t val)
         break;
     }
     case SLOGIC_ANALYZER_DIVIDER:   s->divider = val; break;
+    case SLOGIC_ANALYZER_TRIGGER:       s->trigger = val & SLOGIC_TRIGGER_ENABLE; break;
+    case SLOGIC_ANALYZER_TRIGGER_LEVEL: s->trigger_level = val; break;
+    case SLOGIC_ANALYZER_TRIGGER_EDGE:  s->trigger_edge = val; break;
+    case SLOGIC_ANALYZER_PRETRIGGER:    s->pretrigger = val & 0xffff; break;
     case SLOGIC_ANALYZER_LIMIT:     s->limit = (s->limit & 0xffffffffULL) | (uint64_t)val << 32; break;
     case SLOGIC_ANALYZER_LIMIT + 4: s->limit = (s->limit & ~0xffffffffULL) | val; break;
     case SLOGIC_FLASH_CONTROL:
@@ -395,6 +468,26 @@ static int sim_stream_read(void *ctx, const uint8_t **data, size_t *size, int *l
     if (!s->streaming || s->ended)
         return SLOGIC_ERR_END;
     size_t max = SIM_BUF_SIZE;
+    if (s->armed) {
+        /* Waiting for the trigger (realtime: samples up to now), nothing streamed; stopped while armed:
+         * no data (the gateware drops it), capture done. */
+        double t0 = slogic_time();
+        double sr = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1);
+        for (;;) {
+            uint64_t upto = s->realtime ? (uint64_t)((slogic_time() - s->t_start)*sr) : s->search + SIM_SEARCH;
+            if (sim_trigger_search(s, upto))
+                break;
+            if (!(s->control & SLOGIC_CONTROL_ENABLE)) {
+                s->status = (s->status & ~SLOGIC_STATUS_RUNNING) | SLOGIC_STATUS_DONE;
+                s->armed  = 0;
+                s->ended  = 1;
+                return SLOGIC_ERR_TIMEOUT;
+            }
+            if (!s->realtime || (slogic_time() - t0)*1e3 >= (timeout_ms < 0 ? 1e9 : timeout_ms))
+                return SLOGIC_ERR_TIMEOUT;
+            slogic_sleep_ms(1);
+        }
+    }
     if (s->realtime && (s->status & SLOGIC_STATUS_RUNNING)) {
         /* Data paced at the samplerate: bytes available since the start. */
         double rate  = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1)*sim_channels(s)/8;
@@ -405,7 +498,7 @@ static int sim_stream_read(void *ctx, const uint8_t **data, size_t *size, int *l
                 max = avail < SIM_BUF_SIZE ? ((size_t)avail)/8*8 : SIM_BUF_SIZE;
                 break;
             }
-            if (!(s->control & SLOGIC_CONTROL_ENABLE) || (s->limit && s->sample >= s->limit))
+            if (!(s->control & SLOGIC_CONTROL_ENABLE) || (s->end && s->sample >= s->end))
                 break;
             if ((slogic_time() - t0)*1e3 >= (timeout_ms < 0 ? 1e9 : timeout_ms))
                 return SLOGIC_ERR_TIMEOUT;

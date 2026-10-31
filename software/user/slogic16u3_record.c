@@ -4,6 +4,7 @@
  *
  *   slogic16u3_record -r 100M -c 16 -n 1000000 -o capture.vcd
  *   slogic16u3_record -r 800M -c 4 -t 2 -o capture.bin        (raw: as received, see slogic_unpack)
+ *   slogic16u3_record -r 200M -c 16 -T CH1=f -P 4000 -n 100000 -o capture.vcd  (hardware trigger)
  *
  * This file is part of SLogic16U3.
  *
@@ -108,6 +109,9 @@ static void help(void)
            "  -t seconds   Capture duration (continuous capture).\n"
            "  -p           Counter test pattern instead of the inputs.\n"
            "  -g           Pattern generator (UART, SPI, PWM, clock, Gray counter) instead of the inputs.\n"
+           "  -T trigger   Hardware trigger: CHn=0/1 (level), r/f/e (rising/falling/any edge), comma\n"
+           "               separated, all ANDed (ex: CH1=f,CH6=1). -n: samples from the trigger.\n"
+           "  -P samples   Pre-trigger samples (default 0, max: 7680/15360/30720 for 16/8/4 channels).\n"
            "  -o file      Output: .vcd, .csv, .u8 (unpacked: 1/2 bytes per sample), else raw packed.\n");
 }
 
@@ -122,7 +126,7 @@ int main(int argc, char **argv)
     char msg[160];
     int c, r;
 
-    while ((c = getopt(argc, argv, "d:r:c:n:t:pgo:h")) != -1) {
+    while ((c = getopt(argc, argv, "d:r:c:n:t:pgT:P:o:h")) != -1) {
         switch (c) {
         case 'd': uri = optarg; break;
         case 'r': cfg.samplerate = parse_rate(optarg); break;
@@ -131,6 +135,14 @@ int main(int argc, char **argv)
         case 't': duration = atof(optarg); cfg.limit = 0; break;
         case 'p': cfg.pattern = SLOGIC_PATTERN_COUNTER; break;
         case 'g': cfg.pattern = SLOGIC_PATTERN_GENERATOR; break;
+        case 'T':
+            cfg.trigger_enable = 1;
+            if (slogic_trigger_parse(optarg, &cfg.trigger)) {
+                fprintf(stderr, "Invalid trigger: %s (ex: CH1=f,CH6=1)\n", optarg);
+                return 1;
+            }
+            break;
+        case 'P': cfg.pretrigger = strtoull(optarg, NULL, 0); break;
         case 'o': out = optarg; break;
         default:  help(); return 1;
         }
@@ -171,6 +183,8 @@ int main(int argc, char **argv)
     uint8_t *u = NULL;
     size_t u_size = 0;
     double t0 = slogic_time();
+    if (cfg.trigger_enable)
+        fprintf(stderr, "Waiting for the trigger (Ctrl-C to abort)...\n");
     for (;;) {
         if (stop_requested || (duration > 0 && slogic_time() - t0 >= duration))
             break;
@@ -197,15 +211,25 @@ int main(int argc, char **argv)
         samples += n;
     }
     double dt = slogic_time() - t0;
+    slogic_capture_status(dev, &st);
+    int triggered = st.triggered;
+    uint64_t trigger_offset = st.trigger_offset, trigger_sample = st.trigger_sample;
     slogic_capture_stop(dev, &st);
     fclose(w.f);
     free(u);
-    if (cfg.limit && samples > cfg.limit)
-        samples = cfg.limit;
+    uint64_t total = cfg.trigger_enable ? (triggered ? trigger_offset + cfg.limit : 0) : cfg.limit;
+    if (cfg.limit && samples > total)
+        samples = total;
+    if (cfg.trigger_enable && triggered)
+        fprintf(stderr, "Triggered: sample %llu of the file (%.9f s), %llu samples after the capture start\n",
+                (unsigned long long)trigger_offset, trigger_offset/(double)cfg.samplerate,
+                (unsigned long long)trigger_sample);
+    else if (cfg.trigger_enable)
+        fprintf(stderr, "Not triggered\n");
     fprintf(stderr, "%llu samples (%u channels @ %g MHz), %.1f MB in %.2fs (%.1f MB/s)%s%s\n",
             (unsigned long long)samples, cfg.channels, cfg.samplerate/1e6, bytes/1e6, dt, bytes/dt/1e6,
             st.overflow ? ", OVERFLOW: data lost (lower the samplerate/channels)" : "",
-            (r && r != SLOGIC_ERR_END) ? ", stopped on error" : "");
+            (r && r != SLOGIC_ERR_END && r != SLOGIC_ERR_TIMEOUT) ? ", stopped on error" : "");
     slogic_close(dev);
     return st.overflow ? 2 : 0;
 }

@@ -256,6 +256,75 @@ int slogic_config_check(const struct slogic_info *info, const struct slogic_conf
         snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
         return SLOGIC_ERR_ARG;
     }
+    if (config->trigger_enable) {
+        const struct slogic_trigger *t = &config->trigger;
+        uint32_t used = t->zero | t->one | t->rising | t->falling;
+        if (!slogic_has_trigger(info)) {
+            snprintf(msg, msg_size, "hardware trigger not supported by this gateware (0.2 or later)");
+            return SLOGIC_ERR_ARG;
+        }
+        if (config->channels < 16 && (used >> config->channels)) {
+            snprintf(msg, msg_size, "trigger on a channel not captured (%u channels)", config->channels);
+            return SLOGIC_ERR_ARG;
+        }
+        if (t->zero & t->one) {
+            snprintf(msg, msg_size, "trigger: channel both low and high");
+            return SLOGIC_ERR_ARG;
+        }
+        if (config->pretrigger > slogic_max_pretrigger(info, config->channels)) {
+            snprintf(msg, msg_size, "pre-trigger %llu samples, max %llu with %u channels",
+                     (unsigned long long)config->pretrigger,
+                     (unsigned long long)slogic_max_pretrigger(info, config->channels), config->channels);
+            return SLOGIC_ERR_ARG;
+        }
+    }
+    return SLOGIC_OK;
+}
+
+/* Samples per 64-bit stream word. */
+static unsigned slogic_spw(unsigned channels)
+{
+    return 64/channels;
+}
+
+int slogic_has_trigger(const struct slogic_info *info)
+{
+    return info && (info->version & 0xffff) >= 2;
+}
+
+uint64_t slogic_max_pretrigger(const struct slogic_info *info, unsigned channels)
+{
+    if (!slogic_has_trigger(info) || slogic_mode(channels) < 0 || info->fifo_words <= 2*SLOGIC_PRETRIGGER_MARGIN)
+        return 0;
+    return (uint64_t)(info->fifo_words - 2*SLOGIC_PRETRIGGER_MARGIN)*slogic_spw(channels);
+}
+
+int slogic_trigger_parse(const char *s, struct slogic_trigger *t)
+{
+    if (!s || !t)
+        return SLOGIC_ERR_ARG;
+    memset(t, 0, sizeof(*t));
+    while (*s) {
+        unsigned ch;
+        int n = 0;
+        char c;
+        if (sscanf(s, "%*[Cc]%*[Hh]%u=%c%n", &ch, &c, &n) != 2 || !n || ch > 15)
+            return SLOGIC_ERR_ARG;
+        uint16_t bit = (uint16_t)(1u << ch);
+        switch (c) {
+        case '0': t->zero    |= bit; break;
+        case '1': t->one     |= bit; break;
+        case 'r': t->rising  |= bit; break;
+        case 'f': t->falling |= bit; break;
+        case 'e': t->rising  |= bit; t->falling |= bit; break;
+        default:  return SLOGIC_ERR_ARG;
+        }
+        s += n;
+        if (*s == ',')
+            s++;
+        else if (*s)
+            return SLOGIC_ERR_ARG;
+    }
     return SLOGIC_OK;
 }
 
@@ -308,20 +377,45 @@ int slogic_capture_start(struct slogic_dev *dev, const struct slogic_config *con
     if (dev->capturing)
         slogic_capture_stop(dev, NULL);
 
-    dev->config      = *config;
-    dev->bytes       = 0;
-    dev->ended       = 0;
-    dev->bytes_limit = config->limit ? 8*((slogic_packed_bytes(config->channels, config->limit) + 7)/8) : 0;
+    dev->config        = *config;
+    dev->bytes         = 0;
+    dev->ended         = 0;
+    dev->trig_known    = 0;
+    dev->trig_sample   = 0;
+    dev->trig_offset   = 0;
+    dev->samples_limit = config->trigger_enable ? 0 : config->limit;
+    dev->bytes_limit   = dev->samples_limit ? 8*((slogic_packed_bytes(config->channels, dev->samples_limit) + 7)/8) : 0;
 
     /* Stopped, configured, stream started (stale data flushed), then enabled. */
     uint32_t control = SLOGIC_CONTROL_MODE(slogic_mode(config->channels)) |
                        SLOGIC_CONTROL_PATTERN(config->pattern);
+    uint64_t limit   = config->limit;
+    uint32_t pre     = 0;
+    if (config->trigger_enable) {
+        /* Gateware limit counted from the trigger cycle (up to ratio - 1 samples before the trigger,
+         * >= 16), trimmed here; pre-trigger in stream words. */
+        unsigned spw = slogic_spw(config->channels);
+        if (limit)
+            limit = limit + dev->info.ratio < 16 ? 16 : limit + dev->info.ratio;
+        pre = (uint32_t)((config->pretrigger + spw - 1)/spw);
+    }
     if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control)))
         return r;
     if ((r = slogic_write32(dev, SLOGIC_ANALYZER_DIVIDER, (uint32_t)(dev->info.base_rate/config->samplerate))))
         return r;
-    if ((r = slogic_write64(dev, SLOGIC_ANALYZER_LIMIT, config->limit)))
+    if ((r = slogic_write64(dev, SLOGIC_ANALYZER_LIMIT, limit)))
         return r;
+    if (slogic_has_trigger(&dev->info)) {
+        const struct slogic_trigger *t = &config->trigger;
+        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_TRIGGER, config->trigger_enable ? SLOGIC_TRIGGER_ENABLE : 0)))
+            return r;
+        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_TRIGGER_LEVEL, (uint32_t)t->one << 16 | t->zero)))
+            return r;
+        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_TRIGGER_EDGE, (uint32_t)t->falling << 16 | t->rising)))
+            return r;
+        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_PRETRIGGER, pre)))
+            return r;
+    }
     if ((r = dev->t->stream_start(dev->ctx)))
         return r;
     if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control | SLOGIC_CONTROL_ENABLE)))
@@ -342,10 +436,20 @@ int slogic_capture_read(struct slogic_dev *dev, const uint8_t **data, size_t *si
     r = dev->t->stream_read(dev->ctx, data, size, &last, timeout_ms);
     if (r)
         return r;
+    if (dev->config.trigger_enable && !dev->trig_known && (*size || last)) {
+        /* First data: forwarded once triggered, trigger position stable. */
+        struct slogic_status st;
+        if ((r = slogic_capture_status(dev, &st)))
+            return r;
+        if (st.triggered && dev->trig_known && dev->config.limit) {
+            dev->samples_limit = dev->trig_offset + dev->config.limit;
+            dev->bytes_limit   = 8*((slogic_packed_bytes(dev->config.channels, dev->samples_limit) + 7)/8);
+        }
+    }
     dev->bytes += *size;
     /* With a limit, the data beyond the limit (padding of the last word) is not returned. */
     if (dev->bytes_limit && dev->bytes >= dev->bytes_limit) {
-        uint64_t keep = slogic_packed_bytes(dev->config.channels, dev->config.limit);
+        uint64_t keep = slogic_packed_bytes(dev->config.channels, dev->samples_limit);
         uint64_t prev = dev->bytes - *size;
         *size = keep > prev ? (size_t)(keep - prev) : 0;
         dev->ended = 1;
@@ -377,6 +481,23 @@ int slogic_capture_status(struct slogic_dev *dev, struct slogic_status *st)
     st->overflow = !!(status & SLOGIC_STATUS_OVERFLOW);
     st->error    = !!(status & SLOGIC_STATUS_ERROR);
     st->bytes    = dev->bytes;
+    if (dev->config.trigger_enable && (status & SLOGIC_STATUS_TRIGGERED)) {
+        if (!dev->trig_known) {
+            /* Stream from word max(0, W - pretrigger) (gateware/analyzer.py). */
+            unsigned spw = slogic_spw(dev->config.channels);
+            uint64_t pre = (dev->config.pretrigger + spw - 1)/spw;
+            uint64_t tc, w;
+            if ((r = slogic_read64(dev, SLOGIC_ANALYZER_TRIGGER_COUNT, &tc)))
+                return r;
+            w = tc/spw;
+            dev->trig_sample = tc;
+            dev->trig_offset = tc - (w > pre ? w - pre : 0)*spw;
+            dev->trig_known  = 1;
+        }
+        st->triggered      = 1;
+        st->trigger_sample = dev->trig_sample;
+        st->trigger_offset = dev->trig_offset;
+    }
     return SLOGIC_OK;
 }
 
