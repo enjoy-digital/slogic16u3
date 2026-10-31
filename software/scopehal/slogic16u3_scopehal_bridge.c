@@ -14,8 +14,9 @@
  * then per enabled channel: u64 channel, u64 bytes, i32 first_sample (0), bytes of bits (sample 8*m+b
  * on bit b of byte m).
  *
- * Triggers (software): edge on one channel with pre-trigger samples from TRIG:DELAY (time from the start
- * of the waveform to the trigger). Capture mode (4/8/16 channels) from the highest enabled channel.
+ * Triggers: edge on one channel with pre-trigger samples from TRIG:DELAY (time from the start of the
+ * waveform to the trigger): hardware trigger (gateware >= 0.2, pre-trigger fitting the gateware buffer),
+ * else software. Capture mode (4/8/16 channels) from the highest enabled channel.
  *
  * This file is part of SLogic16U3.
  *
@@ -250,6 +251,74 @@ static uint64_t effective_rate(struct bridge *b, unsigned channels)
     return max;
 }
 
+/* Hardware trigger capture: the stream starts with the pre-trigger samples kept by the gateware (extra
+ * ones dropped, missing ones when the trigger came early: first sample repeated). Returns the pre-trigger
+ * samples, -1 (stopped/error) or -2 (forced while armed: capture again free running). */
+static int64_t capture_waveform_hw(struct bridge *b, uint16_t *wfm, uint64_t rate, uint64_t pre)
+{
+    unsigned channels = capture_channels(b);
+    struct slogic_config cfg = { .samplerate = rate, .channels = channels, .limit = b->depth - pre,
+                                 .trigger_enable = 1, .pretrigger = pre };
+    uint16_t bit = (uint16_t)(1u << b->trig_src);
+    uint64_t pos = 0, skip = 0, have = 0, got = 0;
+    int known = 0, r;
+    uint8_t *u = NULL;
+    size_t u_size = 0;
+    const uint8_t *data;
+    size_t size;
+
+    if (b->trig_edge != EDGE_FALLING)
+        cfg.trigger.rising = bit;
+    if (b->trig_edge != EDGE_RISING)
+        cfg.trigger.falling = bit;
+    if ((r = slogic_capture_start(b->dev, &cfg)))
+        return -1;
+    for (;;) {
+        scpi_poll(b);
+        if (b->armed == ARM_STOPPED || quit)
+            break;
+        if (b->force && !known) {
+            slogic_capture_stop(b->dev, NULL);
+            free(u);
+            return -2;
+        }
+        r = slogic_capture_read(b->dev, &data, &size, 20);
+        if (r == SLOGIC_ERR_TIMEOUT)
+            continue;
+        if (r)
+            break;
+        if (!known) {
+            struct slogic_status st;
+            if (slogic_capture_status(b->dev, &st) || !st.triggered)
+                break;
+            skip  = st.trigger_offset > pre ? st.trigger_offset - pre : 0;
+            have  = st.trigger_offset - skip;
+            got   = pre - have; /* Missing pre-trigger samples (filled below). */
+            known = 1;
+        }
+        uint64_t n = (uint64_t)size*8/channels;
+        if (n*2 > u_size) {
+            u_size = n*2;
+            u = realloc(u, u_size);
+        }
+        slogic_unpack(channels, data, pos, n, u);
+        for (uint64_t i = 0; i < n && got < b->depth; i++, pos++) {
+            if (pos < skip)
+                continue;
+            uint16_t v = slogic_unitsize(channels) == 2 ? (uint16_t)(u[2*i] | u[2*i + 1] << 8) : u[i];
+            if (pos == skip)
+                for (uint64_t k = 0; k < pre - have; k++)
+                    wfm[k] = v;
+            wfm[got++] = v;
+        }
+        if (got >= b->depth)
+            break;
+    }
+    slogic_capture_stop(b->dev, NULL);
+    free(u);
+    return (known && got >= b->depth) ? (int64_t)pre : -1;
+}
+
 static int64_t capture_waveform(struct bridge *b, uint16_t *wfm, uint64_t rate)
 {
     unsigned channels = capture_channels(b);
@@ -265,6 +334,12 @@ static int64_t capture_waveform(struct bridge *b, uint16_t *wfm, uint64_t rate)
 
     if (pre >= b->depth)
         pre = b->depth - 1;
+    if (!triggered && slogic_has_trigger(&b->info) && pre <= slogic_max_pretrigger(&b->info, channels)) {
+        int64_t r = capture_waveform_hw(b, wfm, rate, pre);
+        if (r != -2)
+            return r;
+        triggered = 1; /* Forced while armed. */
+    }
     if (triggered) {
         pre = 0;
         cfg.limit = b->depth; /* Free running/forced: exactly depth samples. */
