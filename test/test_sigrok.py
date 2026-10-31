@@ -54,6 +54,48 @@ class TestSigrok(unittest.TestCase):
     def test_counter_4ch(self):
         self.check_counter(4, 800_000_000, 9999)
 
+    def check_trigger(self, channels, samplerate, samples, ratio, trigger, t, extra=()):
+        # Counter pattern (sample i = i*divider): trigger at sample t, capture ratio % of pre-trigger
+        # samples: the output starts at t - pre (stream window of the hardware trigger, trimmed).
+        divider = 800_000_000//samplerate
+        chans   = ",".join(f"CH{i}" for i in range(channels))
+        pre     = min(t, ratio*samples//100)
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "data.bin")
+            r   = self.run_cli("-l", "4", "-C", chans, "-c",
+                f"samplerate={samplerate}:pattern=counter:captureratio={ratio}",
+                "--samples", str(samples), "--triggers", trigger, "--wait-trigger", *extra,
+                "-O", "binary", "-o", out)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            data = open(out, "rb").read()
+        log = r.stderr.decode()
+        unit = 2 if channels > 8 else 1
+        mask = (1 << channels) - 1
+        got  = [int.from_bytes(data[unit*i:unit*(i + 1)], "little") & mask for i in range(len(data)//unit)]
+        first = t - pre
+        ref   = [((first + i)*divider) & 0xffff & mask for i in range(len(got))]
+        bad   = next((i for i in range(len(got)) if got[i] != ref[i]), None)
+        self.assertIsNone(bad, f"sample {bad}")
+        return log, len(got), pre
+
+    def test_trigger_hw(self):
+        # 16 channels at 200MS/s: CH14 high, others low (0x4000 = 4*4096): sample 4096, 10% pre-trigger.
+        cond = ",".join(f"CH{i}={1 if i == 14 else 0}" for i in range(16))
+        log, n, pre = self.check_trigger(16, 200_000_000, 20000, 10, cond, 4096)
+        self.assertIn("Hardware trigger", log)
+        self.assertIn("SR_DF_TRIGGER", log)
+        self.assertEqual(n, 20000)
+        # 4 channels at 800MS/s: CH3 rising (sample 8), early trigger: 8 pre-trigger samples only.
+        log, n, pre = self.check_trigger(4, 800_000_000, 1000, 50, "CH3=r", 8)
+        self.assertIn("Hardware trigger", log)
+        self.assertEqual(n, 8 + 500)
+
+    def test_trigger_soft_fallback(self):
+        # Pre-trigger deeper than the hardware buffer: soft trigger (CH7 rising: sample 16, 8*16 = 128).
+        log, n, pre = self.check_trigger(8, 100_000_000, 200000, 50, "CH7=r", 16)
+        self.assertIn("soft trigger", log)
+        self.assertGreater(n, 0)
+
     def test_uart_decode(self):
         # Simulated inputs: UART 1Mbaud on CH0, decoded by libsigrokdecode.
         r = self.run_cli("-c", "samplerate=10M", "--samples", "2000000", "-P", "uart:rx=CH0:baudrate=1000000",

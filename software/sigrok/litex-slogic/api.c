@@ -230,6 +230,54 @@ static int config_list(uint32_t key, GVariant **data,
 	return SR_OK;
 }
 
+/*
+ * Hardware trigger configuration from the session trigger: a single stage on captured channels, the
+ * pre-trigger samples fitting the gateware buffer (else: soft trigger, unlimited pre-trigger).
+ */
+static gboolean hw_trigger_config(const struct sr_dev_inst *sdi, struct sr_trigger *trigger,
+	struct slogic_config *cfg)
+{
+	struct dev_context *devc = sdi->priv;
+	struct sr_trigger_stage *stage;
+	struct slogic_trigger t = { 0 };
+	uint64_t pre;
+
+	if (!slogic_has_trigger(&devc->info)) {
+		sr_info("Gateware without hardware trigger (0.2 or later): soft trigger.");
+		return FALSE;
+	}
+	if (g_slist_length(trigger->stages) != 1) {
+		sr_info("Multi-stage trigger: soft trigger.");
+		return FALSE;
+	}
+	pre = devc->limit_samples ? devc->capture_ratio*devc->limit_samples/100 : 0;
+	if (pre > slogic_max_pretrigger(&devc->info, devc->channels)) {
+		sr_info("%" PRIu64 " pre-trigger samples (hardware max %" PRIu64 "): soft trigger.", pre,
+			slogic_max_pretrigger(&devc->info, devc->channels));
+		return FALSE;
+	}
+	stage = trigger->stages->data;
+	for (GSList *l = stage->matches; l; l = l->next) {
+		struct sr_trigger_match *m = l->data;
+		uint16_t bit;
+		if (!m->channel->enabled || m->channel->index >= (int)devc->channels)
+			return FALSE;
+		bit = (uint16_t)(1u << m->channel->index);
+		switch (m->match) {
+		case SR_TRIGGER_ZERO:    t.zero    |= bit; break;
+		case SR_TRIGGER_ONE:     t.one     |= bit; break;
+		case SR_TRIGGER_RISING:  t.rising  |= bit; break;
+		case SR_TRIGGER_FALLING: t.falling |= bit; break;
+		case SR_TRIGGER_EDGE:    t.rising  |= bit; t.falling |= bit; break;
+		default: return FALSE;
+		}
+	}
+	cfg->trigger        = t;
+	cfg->trigger_enable = 1;
+	cfg->pretrigger     = pre;
+	return TRUE;
+}
+
 static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc = sdi->priv;
@@ -238,6 +286,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	char msg[160];
 	int r;
 
+	memset(&cfg, 0, sizeof(cfg));
 	devc->channels = litex_slogic_channels_mode(sdi);
 	devc->unitsize = slogic_unitsize(devc->channels);
 	/* Higher channel modes when the samplerate needs it are not possible: report the limit. */
@@ -250,12 +299,28 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	devc->acq_done         = FALSE;
 	devc->trigger_fired    = TRUE;
 	devc->stl              = NULL;
+	devc->hw_trigger       = FALSE;
+	devc->hw_known         = FALSE;
 
-	if ((trigger = sr_session_trigger_get(sdi->session))) {
+	trigger = sr_session_trigger_get(sdi->session);
+	if (trigger && hw_trigger_config(sdi, trigger, &cfg)) {
+		/* Hardware trigger: limit_samples split in pre-trigger (capture ratio) and post-trigger samples. */
+		devc->hw_trigger    = TRUE;
+		devc->hw_pretrigger = cfg.pretrigger;
+		devc->trigger_fired = FALSE;
+		cfg.limit           = devc->limit_samples ? devc->limit_samples - cfg.pretrigger : 0;
+		if (devc->limit_samples && !cfg.limit)
+			cfg.limit = 1; /* 100% pre-trigger: the trigger sample. */
+		sr_info("Hardware trigger, %" PRIu64 " pre-trigger samples.", cfg.pretrigger);
+	} else if (trigger) {
 		int pre = devc->limit_samples ? (int)(devc->capture_ratio*devc->limit_samples/100) : 0;
 		devc->stl = soft_trigger_logic_new(sdi, trigger, pre);
 		if (!devc->stl)
 			return SR_ERR_MALLOC;
+		/* Samples sent at the capture mode unitsize (1 byte with 4/8 channels): the soft trigger
+		 * uses the unitsize of all the device channels (2 bytes), buffers allocated for it. */
+		devc->stl->unitsize         = devc->unitsize;
+		devc->stl->pre_trigger_size = devc->unitsize*pre;
 		devc->trigger_fired = FALSE;
 	} else {
 		/* No trigger: exact sample count captured by the gateware. */
