@@ -242,10 +242,14 @@ class Capture(LiteXModule):
         # remaining is reloaded with the limit (counted from the trigger cycle).
         remaining = Signal(cbits)
         rem_small = Signal()
+        rem_hi_0  = Signal() # remaining < 32 (from the registers only: off the d2_k path).
+        rem_low_n = Signal(6)
         limit_en  = Signal()
         d2_k      = Signal(4)
         limited   = Signal()
         self.comb += [
+            rem_hi_0.eq(remaining[5:] == 0),
+            rem_low_n.eq(remaining[:5] - d2_k),
             If(limit_en & rem_small & (remaining[:5] <= d1b_k),
                 d2_k.eq(remaining[:4]),
                 limited.eq(1),
@@ -348,7 +352,8 @@ class Capture(LiteXModule):
                     NextValue(rem_small, self.limit < 16),
                 ).Else(
                     NextValue(remaining, remaining - d2_k),
-                    NextValue(rem_small, (remaining - d2_k) < 16),
+                    # (remaining - d2_k) < 16 without the 48-bit result (d2_k <= ratio, timings).
+                    NextValue(rem_small, rem_hi_0 & (rem_low_n < 16)),
                 ),
                 If(limited, NextValue(stop_req, 1)),
                 If(hit,

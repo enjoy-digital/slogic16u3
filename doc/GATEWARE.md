@@ -115,7 +115,7 @@ BSRAMs on the GW5AT-15A).
 |--------------------------------|-------------|-------|------------|-----------|--------------|
 | USB3 only (`--no-analyzer --no-flash`, 1.9.10) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -  |
 | Full (place_option 3)          | 13222 (88%) | 34/35 | 74.7MHz    | 131.5MHz  | 101.8MHz     |
-| Full + hardware trigger (0.2, place_option 3) | 14515 (96%) | 34/35 | 77.3MHz | 131.3MHz | 101.1MHz |
+| Full + hardware trigger (0.2, place_option 2, CRC-32 cascade) | 13823 (92%) | 34/35 | 75.9MHz | 143.9MHz | 106.4MHz |
 
 ¹ USB3 packets slots optimized out without the Analyzer.
 

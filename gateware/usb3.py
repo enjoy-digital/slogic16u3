@@ -62,8 +62,10 @@ class USB3Device(LiteXModule):
 
         # Device Core ------------------------------------------------------------------------------
         self.bulk_in = bulk_in = USB3BulkIN(ept=USB3_DATA_EPT, max_burst=max_burst, data_width=data_width)
+        # CRC-32s from chained 1-byte stages: less logic (GW5AT-15 nearly full), sys at 62.5MHz.
         self.core    = core    = USB3DeviceCore(phy, sys_clk_freq, descriptors, [bulk_in],
-            with_ep0_handler = True)
+            with_ep0_handler = True,
+            crc32_cascade    = True)
 
         # EP0 Wishbone Bridge ----------------------------------------------------------------------
         self.wishbone = USB3EP0Wishbone(core.ep0)
