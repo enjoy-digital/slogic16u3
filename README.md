@@ -15,6 +15,8 @@ to PulseView:
   endpoints in the fabric (5Gbps).
 - **Simple gateware around the USB3 core**: IDES8 deserializers (800MS/s base), capture core (decimation, 4/8/16
   channel modes, sample-exact limits, overflow detection, test pattern), raw Bulk IN streaming, CSRs over EP0.
+- **Hardware trigger**: edge/level/pattern on any channel, sample-exact, with a pre-trigger window in the capture
+  FIFO (up to 7680/15360/30720 samples with 16/8/4 channels): nothing is streamed until the trigger.
 - **Low level C access**: `libslogic16u3` (USB3 transport + a simulated device), `slogic16u3_util`/`slogic16u3_record` tools.
 - **sigrok/PulseView**: native libsigrok driver (`litex-slogic`), **ngscopeclient**: TwinLan bridge + scopehal
   driver.

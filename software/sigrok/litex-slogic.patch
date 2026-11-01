@@ -35,10 +35,10 @@ index 024dd4da..97806095 100644
  SR_DRIVER([Link Instruments MSO-19], [link-mso19], [libserialport])
 diff --git a/src/hardware/litex-slogic/api.c b/src/hardware/litex-slogic/api.c
 new file mode 100644
-index 00000000..e9520da0
+index 00000000..e7e87ca5
 --- /dev/null
 +++ b/src/hardware/litex-slogic/api.c
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,382 @@
 +/*
 + * This file is part of the libsigrok project.
 + *
@@ -271,6 +271,54 @@ index 00000000..e9520da0
 +	return SR_OK;
 +}
 +
++/*
++ * Hardware trigger configuration from the session trigger: a single stage on captured channels, the
++ * pre-trigger samples fitting the gateware buffer (else: soft trigger, unlimited pre-trigger).
++ */
++static gboolean hw_trigger_config(const struct sr_dev_inst *sdi, struct sr_trigger *trigger,
++	struct slogic_config *cfg)
++{
++	struct dev_context *devc = sdi->priv;
++	struct sr_trigger_stage *stage;
++	struct slogic_trigger t = { 0 };
++	uint64_t pre;
++
++	if (!slogic_has_trigger(&devc->info)) {
++		sr_info("Gateware without hardware trigger (0.2 or later): soft trigger.");
++		return FALSE;
++	}
++	if (g_slist_length(trigger->stages) != 1) {
++		sr_info("Multi-stage trigger: soft trigger.");
++		return FALSE;
++	}
++	pre = devc->limit_samples ? devc->capture_ratio*devc->limit_samples/100 : 0;
++	if (pre > slogic_max_pretrigger(&devc->info, devc->channels)) {
++		sr_info("%" PRIu64 " pre-trigger samples (hardware max %" PRIu64 "): soft trigger.", pre,
++			slogic_max_pretrigger(&devc->info, devc->channels));
++		return FALSE;
++	}
++	stage = trigger->stages->data;
++	for (GSList *l = stage->matches; l; l = l->next) {
++		struct sr_trigger_match *m = l->data;
++		uint16_t bit;
++		if (!m->channel->enabled || m->channel->index >= (int)devc->channels)
++			return FALSE;
++		bit = (uint16_t)(1u << m->channel->index);
++		switch (m->match) {
++		case SR_TRIGGER_ZERO:    t.zero    |= bit; break;
++		case SR_TRIGGER_ONE:     t.one     |= bit; break;
++		case SR_TRIGGER_RISING:  t.rising  |= bit; break;
++		case SR_TRIGGER_FALLING: t.falling |= bit; break;
++		case SR_TRIGGER_EDGE:    t.rising  |= bit; t.falling |= bit; break;
++		default: return FALSE;
++		}
++	}
++	cfg->trigger        = t;
++	cfg->trigger_enable = 1;
++	cfg->pretrigger     = pre;
++	return TRUE;
++}
++
 +static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 +{
 +	struct dev_context *devc = sdi->priv;
@@ -279,6 +327,7 @@ index 00000000..e9520da0
 +	char msg[160];
 +	int r;
 +
++	memset(&cfg, 0, sizeof(cfg));
 +	devc->channels = litex_slogic_channels_mode(sdi);
 +	devc->unitsize = slogic_unitsize(devc->channels);
 +	/* Higher channel modes when the samplerate needs it are not possible: report the limit. */
@@ -291,12 +340,28 @@ index 00000000..e9520da0
 +	devc->acq_done         = FALSE;
 +	devc->trigger_fired    = TRUE;
 +	devc->stl              = NULL;
++	devc->hw_trigger       = FALSE;
++	devc->hw_known         = FALSE;
 +
-+	if ((trigger = sr_session_trigger_get(sdi->session))) {
++	trigger = sr_session_trigger_get(sdi->session);
++	if (trigger && hw_trigger_config(sdi, trigger, &cfg)) {
++		/* Hardware trigger: limit_samples split in pre-trigger (capture ratio) and post-trigger samples. */
++		devc->hw_trigger    = TRUE;
++		devc->hw_pretrigger = cfg.pretrigger;
++		devc->trigger_fired = FALSE;
++		cfg.limit           = devc->limit_samples ? devc->limit_samples - cfg.pretrigger : 0;
++		if (devc->limit_samples && !cfg.limit)
++			cfg.limit = 1; /* 100% pre-trigger: the trigger sample. */
++		sr_info("Hardware trigger, %" PRIu64 " pre-trigger samples.", cfg.pretrigger);
++	} else if (trigger) {
 +		int pre = devc->limit_samples ? (int)(devc->capture_ratio*devc->limit_samples/100) : 0;
 +		devc->stl = soft_trigger_logic_new(sdi, trigger, pre);
 +		if (!devc->stl)
 +			return SR_ERR_MALLOC;
++		/* Samples sent at the capture mode unitsize (1 byte with 4/8 channels): the soft trigger
++		 * uses the unitsize of all the device channels (2 bytes), buffers allocated for it. */
++		devc->stl->unitsize         = devc->unitsize;
++		devc->stl->pre_trigger_size = devc->unitsize*pre;
 +		devc->trigger_fired = FALSE;
 +	} else {
 +		/* No trigger: exact sample count captured by the gateware. */
@@ -358,10 +423,10 @@ index 00000000..e9520da0
 +SR_REGISTER_DEV_DRIVER(litex_slogic_driver_info);
 diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic.c b/src/hardware/litex-slogic/libslogic16u3/slogic.c
 new file mode 100644
-index 00000000..28694b49
+index 00000000..71f9be3a
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic16u3/slogic.c
-@@ -0,0 +1,451 @@
+@@ -0,0 +1,572 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic16u3: device, registers, configuration and capture.
@@ -620,6 +685,75 @@ index 00000000..28694b49
 +        snprintf(msg, msg_size, "unknown pattern %u", config->pattern);
 +        return SLOGIC_ERR_ARG;
 +    }
++    if (config->trigger_enable) {
++        const struct slogic_trigger *t = &config->trigger;
++        uint32_t used = t->zero | t->one | t->rising | t->falling;
++        if (!slogic_has_trigger(info)) {
++            snprintf(msg, msg_size, "hardware trigger not supported by this gateware (0.2 or later)");
++            return SLOGIC_ERR_ARG;
++        }
++        if (config->channels < 16 && (used >> config->channels)) {
++            snprintf(msg, msg_size, "trigger on a channel not captured (%u channels)", config->channels);
++            return SLOGIC_ERR_ARG;
++        }
++        if (t->zero & t->one) {
++            snprintf(msg, msg_size, "trigger: channel both low and high");
++            return SLOGIC_ERR_ARG;
++        }
++        if (config->pretrigger > slogic_max_pretrigger(info, config->channels)) {
++            snprintf(msg, msg_size, "pre-trigger %llu samples, max %llu with %u channels",
++                     (unsigned long long)config->pretrigger,
++                     (unsigned long long)slogic_max_pretrigger(info, config->channels), config->channels);
++            return SLOGIC_ERR_ARG;
++        }
++    }
++    return SLOGIC_OK;
++}
++
++/* Samples per 64-bit stream word. */
++static unsigned slogic_spw(unsigned channels)
++{
++    return 64/channels;
++}
++
++int slogic_has_trigger(const struct slogic_info *info)
++{
++    return info && (info->version & 0xffff) >= 2;
++}
++
++uint64_t slogic_max_pretrigger(const struct slogic_info *info, unsigned channels)
++{
++    if (!slogic_has_trigger(info) || slogic_mode(channels) < 0 || info->fifo_words <= 2*SLOGIC_PRETRIGGER_MARGIN)
++        return 0;
++    return (uint64_t)(info->fifo_words - 2*SLOGIC_PRETRIGGER_MARGIN)*slogic_spw(channels);
++}
++
++int slogic_trigger_parse(const char *s, struct slogic_trigger *t)
++{
++    if (!s || !t)
++        return SLOGIC_ERR_ARG;
++    memset(t, 0, sizeof(*t));
++    while (*s) {
++        unsigned ch;
++        int n = 0;
++        char c;
++        if (sscanf(s, "%*[Cc]%*[Hh]%u=%c%n", &ch, &c, &n) != 2 || !n || ch > 15)
++            return SLOGIC_ERR_ARG;
++        uint16_t bit = (uint16_t)(1u << ch);
++        switch (c) {
++        case '0': t->zero    |= bit; break;
++        case '1': t->one     |= bit; break;
++        case 'r': t->rising  |= bit; break;
++        case 'f': t->falling |= bit; break;
++        case 'e': t->rising  |= bit; t->falling |= bit; break;
++        default:  return SLOGIC_ERR_ARG;
++        }
++        s += n;
++        if (*s == ',')
++            s++;
++        else if (*s)
++            return SLOGIC_ERR_ARG;
++    }
 +    return SLOGIC_OK;
 +}
 +
@@ -672,20 +806,45 @@ index 00000000..28694b49
 +    if (dev->capturing)
 +        slogic_capture_stop(dev, NULL);
 +
-+    dev->config      = *config;
-+    dev->bytes       = 0;
-+    dev->ended       = 0;
-+    dev->bytes_limit = config->limit ? 8*((slogic_packed_bytes(config->channels, config->limit) + 7)/8) : 0;
++    dev->config        = *config;
++    dev->bytes         = 0;
++    dev->ended         = 0;
++    dev->trig_known    = 0;
++    dev->trig_sample   = 0;
++    dev->trig_offset   = 0;
++    dev->samples_limit = config->trigger_enable ? 0 : config->limit;
++    dev->bytes_limit   = dev->samples_limit ? 8*((slogic_packed_bytes(config->channels, dev->samples_limit) + 7)/8) : 0;
 +
 +    /* Stopped, configured, stream started (stale data flushed), then enabled. */
 +    uint32_t control = SLOGIC_CONTROL_MODE(slogic_mode(config->channels)) |
 +                       SLOGIC_CONTROL_PATTERN(config->pattern);
++    uint64_t limit   = config->limit;
++    uint32_t pre     = 0;
++    if (config->trigger_enable) {
++        /* Gateware limit counted from the trigger cycle (up to ratio - 1 samples before the trigger,
++         * >= 16), trimmed here; pre-trigger in stream words. */
++        unsigned spw = slogic_spw(config->channels);
++        if (limit)
++            limit = limit + dev->info.ratio < 16 ? 16 : limit + dev->info.ratio;
++        pre = (uint32_t)((config->pretrigger + spw - 1)/spw);
++    }
 +    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control)))
 +        return r;
 +    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_DIVIDER, (uint32_t)(dev->info.base_rate/config->samplerate))))
 +        return r;
-+    if ((r = slogic_write64(dev, SLOGIC_ANALYZER_LIMIT, config->limit)))
++    if ((r = slogic_write64(dev, SLOGIC_ANALYZER_LIMIT, limit)))
 +        return r;
++    if (slogic_has_trigger(&dev->info)) {
++        const struct slogic_trigger *t = &config->trigger;
++        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_TRIGGER, config->trigger_enable ? SLOGIC_TRIGGER_ENABLE : 0)))
++            return r;
++        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_TRIGGER_LEVEL, (uint32_t)t->one << 16 | t->zero)))
++            return r;
++        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_TRIGGER_EDGE, (uint32_t)t->falling << 16 | t->rising)))
++            return r;
++        if ((r = slogic_write32(dev, SLOGIC_ANALYZER_PRETRIGGER, pre)))
++            return r;
++    }
 +    if ((r = dev->t->stream_start(dev->ctx)))
 +        return r;
 +    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_CONTROL, control | SLOGIC_CONTROL_ENABLE)))
@@ -706,10 +865,20 @@ index 00000000..28694b49
 +    r = dev->t->stream_read(dev->ctx, data, size, &last, timeout_ms);
 +    if (r)
 +        return r;
++    if (dev->config.trigger_enable && !dev->trig_known && (*size || last)) {
++        /* First data: forwarded once triggered, trigger position stable. */
++        struct slogic_status st;
++        if ((r = slogic_capture_status(dev, &st)))
++            return r;
++        if (st.triggered && dev->trig_known && dev->config.limit) {
++            dev->samples_limit = dev->trig_offset + dev->config.limit;
++            dev->bytes_limit   = 8*((slogic_packed_bytes(dev->config.channels, dev->samples_limit) + 7)/8);
++        }
++    }
 +    dev->bytes += *size;
 +    /* With a limit, the data beyond the limit (padding of the last word) is not returned. */
 +    if (dev->bytes_limit && dev->bytes >= dev->bytes_limit) {
-+        uint64_t keep = slogic_packed_bytes(dev->config.channels, dev->config.limit);
++        uint64_t keep = slogic_packed_bytes(dev->config.channels, dev->samples_limit);
 +        uint64_t prev = dev->bytes - *size;
 +        *size = keep > prev ? (size_t)(keep - prev) : 0;
 +        dev->ended = 1;
@@ -741,6 +910,23 @@ index 00000000..28694b49
 +    st->overflow = !!(status & SLOGIC_STATUS_OVERFLOW);
 +    st->error    = !!(status & SLOGIC_STATUS_ERROR);
 +    st->bytes    = dev->bytes;
++    if (dev->config.trigger_enable && (status & SLOGIC_STATUS_TRIGGERED)) {
++        if (!dev->trig_known) {
++            /* Stream from word max(0, W - pretrigger) (gateware/analyzer.py). */
++            unsigned spw = slogic_spw(dev->config.channels);
++            uint64_t pre = (dev->config.pretrigger + spw - 1)/spw;
++            uint64_t tc, w;
++            if ((r = slogic_read64(dev, SLOGIC_ANALYZER_TRIGGER_COUNT, &tc)))
++                return r;
++            w = tc/spw;
++            dev->trig_sample = tc;
++            dev->trig_offset = tc - (w > pre ? w - pre : 0)*spw;
++            dev->trig_known  = 1;
++        }
++        st->triggered      = 1;
++        st->trigger_sample = dev->trig_sample;
++        st->trigger_offset = dev->trig_offset;
++    }
 +    return SLOGIC_OK;
 +}
 +
@@ -815,10 +1001,10 @@ index 00000000..28694b49
 +}
 diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic.h b/src/hardware/litex-slogic/libslogic16u3/slogic.h
 new file mode 100644
-index 00000000..6094be97
+index 00000000..08d4b55d
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic16u3/slogic.h
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,206 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic16u3: SLogic16U3 (LiteX gateware) host library.
@@ -913,11 +1099,25 @@ index 00000000..6094be97
 +/* Capture */
 +/*---------*/
 +
++/* Hardware trigger (gateware >= 0.2): single stage, bit n: CHn, all the channels ANDed (channels without
++ * condition: don't care, rising + falling: any edge). */
++struct slogic_trigger {
++    uint16_t zero;             /* Channels low. */
++    uint16_t one;              /* Channels high. */
++    uint16_t rising;           /* Channels rising (previous sample low, this one high). */
++    uint16_t falling;          /* Channels falling. */
++};
++
 +struct slogic_config {
 +    uint64_t samplerate;       /* Hz: base_rate/divider. */
 +    unsigned channels;         /* 4, 8 or 16 (CH0..CHn-1). */
-+    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). */
++    uint64_t limit;            /* Samples (0: continuous, until slogic_capture_stop). With the trigger:
++                                * samples from the trigger sample (included). */
 +    unsigned pattern;          /* 0: inputs, 1: counter test pattern, 2: pattern generator. */
++    int      trigger_enable;   /* Hardware trigger: nothing is streamed until it matches. */
++    struct slogic_trigger trigger;
++    uint64_t pretrigger;       /* Samples kept before the trigger (<= slogic_max_pretrigger(), at least
++                                * this many unless the trigger comes earlier). */
 +};
 +
 +struct slogic_status {
@@ -927,6 +1127,10 @@ index 00000000..6094be97
 +    int      error;            /* Invalid configuration. */
 +    uint64_t samples;          /* Captured samples. */
 +    uint64_t bytes;            /* Bytes received by the host. */
++    int      triggered;        /* Hardware trigger matched. */
++    uint64_t trigger_sample;   /* Trigger sample index in the capture (since the start). */
++    uint64_t trigger_offset;   /* Trigger sample index in the stream (samples returned by
++                                * slogic_capture_read: the pre-trigger samples come first). */
 +};
 +
 +/* Configuration check: SLOGIC_OK or SLOGIC_ERR_ARG (msg: reason, may be NULL). */
@@ -937,9 +1141,17 @@ index 00000000..6094be97
 +/* Maximum samplerate supported by the gateware datapath for a channel count. */
 +uint64_t slogic_max_samplerate(const struct slogic_info *info, unsigned channels);
 +
++/* Hardware trigger support (gateware >= 0.2) and maximum pre-trigger samples for a channel count. */
++int      slogic_has_trigger(const struct slogic_info *info);
++uint64_t slogic_max_pretrigger(const struct slogic_info *info, unsigned channels);
++/* Trigger from a sigrok like string: "CH1=f,CH6=1,CH7=0,CH0=r,CH3=e" (0/1: level, r/f/e: rising/
++ * falling/any edge), SLOGIC_OK or SLOGIC_ERR_ARG. */
++int      slogic_trigger_parse(const char *s, struct slogic_trigger *trigger);
++
 +int slogic_capture_start(struct slogic_dev *dev, const struct slogic_config *config);
-+/* Next data buffer (valid until the next call): SLOGIC_OK, SLOGIC_ERR_TIMEOUT, SLOGIC_ERR_END (capture
-+ * done, all data read), SLOGIC_ERR_OVERFLOW or a transport error. */
++/* Next data buffer (valid until the next call): SLOGIC_OK, SLOGIC_ERR_TIMEOUT (no data yet: also while
++ * waiting for the trigger), SLOGIC_ERR_END (capture done, all data read), SLOGIC_ERR_OVERFLOW or a
++ * transport error. With the trigger, the status gives the trigger position once data is received. */
 +int slogic_capture_read(struct slogic_dev *dev, const uint8_t **data, size_t *size, int timeout_ms);
 +int slogic_capture_stop(struct slogic_dev *dev, struct slogic_status *status);
 +int slogic_capture_status(struct slogic_dev *dev, struct slogic_status *status);
@@ -1001,10 +1213,10 @@ index 00000000..6094be97
 +#endif /* SLOGIC_H */
 diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_internal.h b/src/hardware/litex-slogic/libslogic16u3/slogic_internal.h
 new file mode 100644
-index 00000000..90263c9b
+index 00000000..1d4749d9
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic16u3/slogic_internal.h
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,59 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic16u3 internals: transports (USB, simulated device).
@@ -1047,7 +1259,11 @@ index 00000000..90263c9b
 +    int      capturing;
 +    int      ended;
 +    uint64_t bytes;
-+    uint64_t bytes_limit;   /* Packed bytes of the capture (limit), 0: continuous. */
++    uint64_t bytes_limit;   /* Packed bytes of the capture (limit), 0: continuous/not known yet. */
++    uint64_t samples_limit; /* Samples of the stream (with bytes_limit). */
++    int      trig_known;    /* Trigger position read (first data with the trigger). */
++    uint64_t trig_sample;
++    uint64_t trig_offset;
 +    /* Flash state. */
 +    int      flash_open;
 +    uint32_t flash_control;
@@ -1062,10 +1278,10 @@ index 00000000..90263c9b
 +#endif /* SLOGIC_INTERNAL_H */
 diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_regs.h b/src/hardware/litex-slogic/libslogic16u3/slogic_regs.h
 new file mode 100644
-index 00000000..81616002
+index 00000000..60cc40dc
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic16u3/slogic_regs.h
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,110 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * SLogic16U3 gateware registers (fixed CSR map, slogic_16u3.py csr_map, checked against the generated
@@ -1115,6 +1331,11 @@ index 00000000..81616002
 +#define SLOGIC_ANALYZER_STATUS       (SLOGIC_ANALYZER_BASE + 0x20)
 +#define SLOGIC_ANALYZER_COUNT        (SLOGIC_ANALYZER_BASE + 0x24) /* 64-bit. */
 +#define SLOGIC_ANALYZER_CLK_COUNT    (SLOGIC_ANALYZER_BASE + 0x2c)
++#define SLOGIC_ANALYZER_TRIGGER      (SLOGIC_ANALYZER_BASE + 0x30)
++#define SLOGIC_ANALYZER_TRIGGER_LEVEL (SLOGIC_ANALYZER_BASE + 0x34) /* zero[15:0], one[31:16]. */
++#define SLOGIC_ANALYZER_TRIGGER_EDGE (SLOGIC_ANALYZER_BASE + 0x38) /* rising[15:0], falling[31:16]. */
++#define SLOGIC_ANALYZER_PRETRIGGER   (SLOGIC_ANALYZER_BASE + 0x3c) /* 64-bit words. */
++#define SLOGIC_ANALYZER_TRIGGER_COUNT (SLOGIC_ANALYZER_BASE + 0x40) /* 64-bit. */
 +
 +#define SLOGIC_MAGIC                 0x534c4f47 /* "SLOG". */
 +
@@ -1138,6 +1359,10 @@ index 00000000..81616002
 +#define SLOGIC_STATUS_DONE           (1 << 1)
 +#define SLOGIC_STATUS_OVERFLOW       (1 << 2)
 +#define SLOGIC_STATUS_ERROR          (1 << 3)
++#define SLOGIC_STATUS_TRIGGERED      (1 << 4)
++
++#define SLOGIC_TRIGGER_ENABLE        (1 << 0)
++#define SLOGIC_PRETRIGGER_MARGIN     64 /* FIFO words (gateware/analyzer.py). */
 +
 +/* Flash */
 +/*-------*/
@@ -1169,10 +1394,10 @@ index 00000000..81616002
 +#endif /* SLOGIC_REGS_H */
 diff --git a/src/hardware/litex-slogic/libslogic16u3/slogic_sim.c b/src/hardware/litex-slogic/libslogic16u3/slogic_sim.c
 new file mode 100644
-index 00000000..8860f43c
+index 00000000..9b7b0660
 --- /dev/null
 +++ b/src/hardware/litex-slogic/libslogic16u3/slogic_sim.c
-@@ -0,0 +1,498 @@
+@@ -0,0 +1,591 @@
 +/* SPDX-License-Identifier: BSD-2-Clause
 + *
 + * libslogic16u3: simulated device (software model of the gateware), for tests and development without
@@ -1185,6 +1410,8 @@ index 00000000..8860f43c
 + *   the gateware (32-bit packer, last word
 + *   flushed), paced at the samplerate (fast: as fast as possible). rate: emulated host bandwidth
 + *   (overflow when the capture needs more, after the FIFO).
++ * - Hardware trigger (as the gateware): nothing streamed until the trigger, then the stream starts at
++ *   word max(0, W - pretrigger) (W: word of the trigger sample), limit counted from the trigger cycle.
 + * - Flash: 16MB SPI Flash (W25Q128-like: JEDEC ID ef 40 18) on hidden pads (pins), golden image area
 + *   (0x800000-) filled with 0xa5.
 + *
@@ -1211,6 +1438,7 @@ index 00000000..8860f43c
 +#define SIM_FIFO_WORDS  2048
 +#define SIM_BUF_SIZE    (256*1024)
 +#define SIM_FLASH_SIZE  (16*1024*1024)
++#define SIM_SEARCH      (1 << 22) /* Samples searched for the trigger per read (fast mode). */
 +#define SIM_IDENT       "SLogic16U3 LiteX (simulated device)"
 +
 +/* Context */
@@ -1229,6 +1457,12 @@ index 00000000..8860f43c
 +    uint32_t control, divider, status;
 +    uint64_t limit, count;
 +    double   t0;
++    /* Trigger. */
++    uint32_t trigger, trigger_level, trigger_edge, pretrigger;
++    int      armed;
++    uint64_t search;      /* Next sample searched for the trigger. */
++    uint64_t trigger_count;
++    uint64_t end;         /* Capture end (samples, 0: none). */
 +    /* Stream. */
 +    int      streaming, ended, overflow_after_words;
 +    uint64_t sample;      /* Next captured sample index. */
@@ -1395,6 +1629,9 @@ index 00000000..8860f43c
 +    s->ended      = 0;
 +    s->status     = SLOGIC_STATUS_RUNNING;
 +    s->t_start    = slogic_time();
++    s->armed      = !!(s->trigger & SLOGIC_TRIGGER_ENABLE);
++    s->search     = 0;
++    s->end        = s->armed ? 0 : s->limit;
 +    /* Invalid configuration: more than 32 bits per sample clock cycle. */
 +    unsigned d = s->divider ? s->divider : 1;
 +    if (((SIM_RATIO + d - 1)/d)*ch > 32) {
@@ -1420,7 +1657,7 @@ index 00000000..8860f43c
 +        int words = 0, flush = 0;
 +        for (int k = 0; k < 2; k++) {
 +            while (running && s->pack_bits < 32) {
-+                if (s->limit && s->sample >= s->limit) {
++                if (s->end && s->sample >= s->end) {
 +                    running = 0;
 +                    break;
 +                }
@@ -1466,6 +1703,57 @@ index 00000000..8860f43c
 +    return n;
 +}
 +
++/* Trigger */
++/*---------*/
++
++static int sim_trigger_match(const struct sim *s, uint64_t i)
++{
++    unsigned ch      = sim_channels(s);
++    uint16_t mask    = (uint16_t)((1u << ch) - 1);
++    uint16_t zero    = (uint16_t)(s->trigger_level & mask);
++    uint16_t one     = (uint16_t)((s->trigger_level >> 16) & mask);
++    uint16_t rising  = (uint16_t)(s->trigger_edge & mask);
++    uint16_t falling = (uint16_t)((s->trigger_edge >> 16) & mask);
++    uint16_t edges   = rising | falling;
++    uint16_t v       = sim_sample(s, i);
++    if ((v & zero) || (~v & one))
++        return 0;
++    if (edges) {
++        if (i == 0)
++            return 0;
++        uint16_t p  = sim_sample(s, i - 1);
++        uint16_t ok = (rising & ~p & v) | (falling & p & ~v);
++        if (edges & ~ok)
++            return 0;
++    }
++    return 1;
++}
++
++/* Search the trigger up to sample upto: stream window set when found. */
++static int sim_trigger_search(struct sim *s, uint64_t upto)
++{
++    for (; s->search < upto; s->search++) {
++        if (!sim_trigger_match(s, s->search))
++            continue;
++        uint64_t t   = s->search;
++        unsigned spw = 64/sim_channels(s);
++        uint64_t d   = s->divider ? s->divider : 1;
++        uint64_t w   = t/spw;
++        uint64_t f   = (w > s->pretrigger ? w - s->pretrigger : 0)*spw;
++        uint64_t c0  = (t*d/SIM_RATIO*SIM_RATIO + d - 1)/d; /* First sample of the trigger cycle. */
++        s->armed         = 0;
++        s->trigger_count = t;
++        s->status       |= SLOGIC_STATUS_TRIGGERED;
++        s->sample        = f;
++        s->count         = f;
++        s->end           = s->limit ? c0 + s->limit : 0;
++        s->t_start      += (double)f*d/SIM_BASE_RATE; /* Paced from the first streamed sample. */
++        return 1;
++    }
++    s->count = s->search;
++    return 0;
++}
++
 +/* Bus */
 +/*-----*/
 +
@@ -1481,7 +1769,7 @@ index 00000000..8860f43c
 +    }
 +    switch (addr) {
 +    case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-+    case SLOGIC_ANALYZER_VERSION:   return 0x00000001;
++    case SLOGIC_ANALYZER_VERSION:   return 0x00000002;
 +    case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
 +    case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
 +    case SLOGIC_ANALYZER_CONTROL:   return s->control;
@@ -1492,6 +1780,12 @@ index 00000000..8860f43c
 +    case SLOGIC_ANALYZER_COUNT:     return (uint32_t)(s->count >> 32);
 +    case SLOGIC_ANALYZER_COUNT + 4: return (uint32_t)s->count;
 +    case SLOGIC_ANALYZER_CLK_COUNT: return (uint32_t)((slogic_time() - s->t0)*SIM_SAMPLE_CLK);
++    case SLOGIC_ANALYZER_TRIGGER:       return s->trigger;
++    case SLOGIC_ANALYZER_TRIGGER_LEVEL: return s->trigger_level;
++    case SLOGIC_ANALYZER_TRIGGER_EDGE:  return s->trigger_edge;
++    case SLOGIC_ANALYZER_PRETRIGGER:    return s->pretrigger;
++    case SLOGIC_ANALYZER_TRIGGER_COUNT:     return (uint32_t)(s->trigger_count >> 32);
++    case SLOGIC_ANALYZER_TRIGGER_COUNT + 4: return (uint32_t)s->trigger_count;
 +    case SLOGIC_FLASH_CONTROL:      return s->flash_control;
 +    case SLOGIC_FLASH_DIVIDER:      return s->flash_divider;
 +    case SLOGIC_FLASH_XFER:         return s->flash_xfer;
@@ -1521,6 +1815,10 @@ index 00000000..8860f43c
 +        break;
 +    }
 +    case SLOGIC_ANALYZER_DIVIDER:   s->divider = val; break;
++    case SLOGIC_ANALYZER_TRIGGER:       s->trigger = val & SLOGIC_TRIGGER_ENABLE; break;
++    case SLOGIC_ANALYZER_TRIGGER_LEVEL: s->trigger_level = val; break;
++    case SLOGIC_ANALYZER_TRIGGER_EDGE:  s->trigger_edge = val; break;
++    case SLOGIC_ANALYZER_PRETRIGGER:    s->pretrigger = val & 0xffff; break;
 +    case SLOGIC_ANALYZER_LIMIT:     s->limit = (s->limit & 0xffffffffULL) | (uint64_t)val << 32; break;
 +    case SLOGIC_ANALYZER_LIMIT + 4: s->limit = (s->limit & ~0xffffffffULL) | val; break;
 +    case SLOGIC_FLASH_CONTROL:
@@ -1570,6 +1868,26 @@ index 00000000..8860f43c
 +    if (!s->streaming || s->ended)
 +        return SLOGIC_ERR_END;
 +    size_t max = SIM_BUF_SIZE;
++    if (s->armed) {
++        /* Waiting for the trigger (realtime: samples up to now), nothing streamed; stopped while armed:
++         * no data (the gateware drops it), capture done. */
++        double t0 = slogic_time();
++        double sr = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1);
++        for (;;) {
++            uint64_t upto = s->realtime ? (uint64_t)((slogic_time() - s->t_start)*sr) : s->search + SIM_SEARCH;
++            if (sim_trigger_search(s, upto))
++                break;
++            if (!(s->control & SLOGIC_CONTROL_ENABLE)) {
++                s->status = (s->status & ~SLOGIC_STATUS_RUNNING) | SLOGIC_STATUS_DONE;
++                s->armed  = 0;
++                s->ended  = 1;
++                return SLOGIC_ERR_TIMEOUT;
++            }
++            if (!s->realtime || (slogic_time() - t0)*1e3 >= (timeout_ms < 0 ? 1e9 : timeout_ms))
++                return SLOGIC_ERR_TIMEOUT;
++            slogic_sleep_ms(1);
++        }
++    }
 +    if (s->realtime && (s->status & SLOGIC_STATUS_RUNNING)) {
 +        /* Data paced at the samplerate: bytes available since the start. */
 +        double rate  = (double)SIM_BASE_RATE/(s->divider ? s->divider : 1)*sim_channels(s)/8;
@@ -1580,7 +1898,7 @@ index 00000000..8860f43c
 +                max = avail < SIM_BUF_SIZE ? ((size_t)avail)/8*8 : SIM_BUF_SIZE;
 +                break;
 +            }
-+            if (!(s->control & SLOGIC_CONTROL_ENABLE) || (s->limit && s->sample >= s->limit))
++            if (!(s->control & SLOGIC_CONTROL_ENABLE) || (s->end && s->sample >= s->end))
 +                break;
 +            if ((slogic_time() - t0)*1e3 >= (timeout_ms < 0 ? 1e9 : timeout_ms))
 +                return SLOGIC_ERR_TIMEOUT;
@@ -2026,10 +2344,10 @@ index 00000000..f4102c30
 +}
 diff --git a/src/hardware/litex-slogic/protocol.c b/src/hardware/litex-slogic/protocol.c
 new file mode 100644
-index 00000000..feeb2b09
+index 00000000..650e5596
 --- /dev/null
 +++ b/src/hardware/litex-slogic/protocol.c
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,173 @@
 +/*
 + * This file is part of the libsigrok project.
 + *
@@ -2116,6 +2434,45 @@ index 00000000..feeb2b09
 +		devc->acq_done = TRUE;
 +}
 +
++/*
++ * Hardware trigger: the stream starts with the pre-trigger samples kept by the gateware (at least the
++ * requested ones unless the trigger came earlier): extra ones dropped, trigger marker at the trigger
++ * sample. pos: stream index of the first sample of the buffer.
++ */
++static void process_samples_hw(const struct sr_dev_inst *sdi, uint8_t *data, uint64_t pos, uint64_t samples)
++{
++	struct dev_context *devc = sdi->priv;
++
++	if (!devc->hw_known) {
++		struct slogic_status st;
++		if (slogic_capture_status(devc->dev, &st) != SLOGIC_OK || !st.triggered)
++			return;
++		devc->hw_trigger_pos = st.trigger_offset;
++		devc->hw_skip        = st.trigger_offset > devc->hw_pretrigger ? st.trigger_offset - devc->hw_pretrigger : 0;
++		devc->hw_known       = TRUE;
++		sr_dbg("Hardware trigger: sample %" PRIu64 " of the capture, %" PRIu64 " pre-trigger samples.",
++			st.trigger_sample, st.trigger_offset - devc->hw_skip);
++	}
++	uint64_t first = pos < devc->hw_skip ? devc->hw_skip - pos : 0;
++	if (first >= samples)
++		return;
++	uint64_t n = samples - first;
++	if (devc->limit_samples && devc->sent_samples + n > devc->limit_samples)
++		n = devc->limit_samples - devc->sent_samples;
++	if (!devc->trigger_fired && pos + first + n > devc->hw_trigger_pos) {
++		uint64_t before = devc->hw_trigger_pos - (pos + first);
++		send_logic(sdi, data + first*devc->unitsize, before);
++		std_session_send_df_trigger(sdi);
++		devc->trigger_fired = TRUE;
++		send_logic(sdi, data + (first + before)*devc->unitsize, n - before);
++	} else {
++		send_logic(sdi, data + first*devc->unitsize, n);
++	}
++	devc->sent_samples += n;
++	if (devc->limit_samples && devc->sent_samples >= devc->limit_samples)
++		devc->acq_done = TRUE;
++}
++
 +SR_PRIV int litex_slogic_receive_data(int fd, int revents, void *cb_data)
 +{
 +	const struct sr_dev_inst *sdi = cb_data;
@@ -2141,8 +2498,11 @@ index 00000000..feeb2b09
 +			devc->unpacked = g_realloc(devc->unpacked, devc->unpacked_size);
 +		}
 +		slogic_unpack(devc->channels, data, devc->received_samples, samples, devc->unpacked);
++		if (devc->hw_trigger)
++			process_samples_hw(sdi, devc->unpacked, devc->received_samples, samples);
++		else
++			process_samples(sdi, devc->unpacked, samples);
 +		devc->received_samples += samples;
-+		process_samples(sdi, devc->unpacked, samples);
 +	}
 +
 +	if (r == SLOGIC_ERR_OVERFLOW) {
@@ -2163,10 +2523,10 @@ index 00000000..feeb2b09
 +}
 diff --git a/src/hardware/litex-slogic/protocol.h b/src/hardware/litex-slogic/protocol.h
 new file mode 100644
-index 00000000..8bae692c
+index 00000000..9eda268b
 --- /dev/null
 +++ b/src/hardware/litex-slogic/protocol.h
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of the libsigrok project.
 + *
@@ -2226,6 +2586,11 @@ index 00000000..8bae692c
 +	size_t unpacked_size;
 +	struct soft_trigger_logic *stl;
 +	gboolean trigger_fired;
++	gboolean hw_trigger;           /* Hardware trigger (gateware >= 0.2), else soft trigger. */
++	uint64_t hw_pretrigger;        /* Pre-trigger samples to send (hardware trigger). */
++	gboolean hw_known;             /* Trigger position in the stream known. */
++	uint64_t hw_skip;              /* Stream samples dropped before the pre-trigger samples. */
++	uint64_t hw_trigger_pos;       /* Trigger sample index in the stream. */
 +	gboolean acq_done;
 +	gboolean acq_running;           /* Session source added. */
 +};

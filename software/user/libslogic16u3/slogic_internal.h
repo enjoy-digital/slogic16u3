@@ -40,7 +40,11 @@ struct slogic_dev {
     int      capturing;
     int      ended;
     uint64_t bytes;
-    uint64_t bytes_limit;   /* Packed bytes of the capture (limit), 0: continuous. */
+    uint64_t bytes_limit;   /* Packed bytes of the capture (limit), 0: continuous/not known yet. */
+    uint64_t samples_limit; /* Samples of the stream (with bytes_limit). */
+    int      trig_known;    /* Trigger position read (first data with the trigger). */
+    uint64_t trig_sample;
+    uint64_t trig_offset;
     /* Flash state. */
     int      flash_open;
     uint32_t flash_control;

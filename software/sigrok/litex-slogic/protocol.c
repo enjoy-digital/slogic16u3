@@ -84,6 +84,45 @@ static void process_samples(const struct sr_dev_inst *sdi, uint8_t *data, uint64
 		devc->acq_done = TRUE;
 }
 
+/*
+ * Hardware trigger: the stream starts with the pre-trigger samples kept by the gateware (at least the
+ * requested ones unless the trigger came earlier): extra ones dropped, trigger marker at the trigger
+ * sample. pos: stream index of the first sample of the buffer.
+ */
+static void process_samples_hw(const struct sr_dev_inst *sdi, uint8_t *data, uint64_t pos, uint64_t samples)
+{
+	struct dev_context *devc = sdi->priv;
+
+	if (!devc->hw_known) {
+		struct slogic_status st;
+		if (slogic_capture_status(devc->dev, &st) != SLOGIC_OK || !st.triggered)
+			return;
+		devc->hw_trigger_pos = st.trigger_offset;
+		devc->hw_skip        = st.trigger_offset > devc->hw_pretrigger ? st.trigger_offset - devc->hw_pretrigger : 0;
+		devc->hw_known       = TRUE;
+		sr_dbg("Hardware trigger: sample %" PRIu64 " of the capture, %" PRIu64 " pre-trigger samples.",
+			st.trigger_sample, st.trigger_offset - devc->hw_skip);
+	}
+	uint64_t first = pos < devc->hw_skip ? devc->hw_skip - pos : 0;
+	if (first >= samples)
+		return;
+	uint64_t n = samples - first;
+	if (devc->limit_samples && devc->sent_samples + n > devc->limit_samples)
+		n = devc->limit_samples - devc->sent_samples;
+	if (!devc->trigger_fired && pos + first + n > devc->hw_trigger_pos) {
+		uint64_t before = devc->hw_trigger_pos - (pos + first);
+		send_logic(sdi, data + first*devc->unitsize, before);
+		std_session_send_df_trigger(sdi);
+		devc->trigger_fired = TRUE;
+		send_logic(sdi, data + (first + before)*devc->unitsize, n - before);
+	} else {
+		send_logic(sdi, data + first*devc->unitsize, n);
+	}
+	devc->sent_samples += n;
+	if (devc->limit_samples && devc->sent_samples >= devc->limit_samples)
+		devc->acq_done = TRUE;
+}
+
 SR_PRIV int litex_slogic_receive_data(int fd, int revents, void *cb_data)
 {
 	const struct sr_dev_inst *sdi = cb_data;
@@ -109,8 +148,11 @@ SR_PRIV int litex_slogic_receive_data(int fd, int revents, void *cb_data)
 			devc->unpacked = g_realloc(devc->unpacked, devc->unpacked_size);
 		}
 		slogic_unpack(devc->channels, data, devc->received_samples, samples, devc->unpacked);
+		if (devc->hw_trigger)
+			process_samples_hw(sdi, devc->unpacked, devc->received_samples, samples);
+		else
+			process_samples(sdi, devc->unpacked, samples);
 		devc->received_samples += samples;
-		process_samples(sdi, devc->unpacked, samples);
 	}
 
 	if (r == SLOGIC_ERR_OVERFLOW) {

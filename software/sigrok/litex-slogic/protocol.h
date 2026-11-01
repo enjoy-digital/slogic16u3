@@ -57,6 +57,11 @@ struct dev_context {
 	size_t unpacked_size;
 	struct soft_trigger_logic *stl;
 	gboolean trigger_fired;
+	gboolean hw_trigger;           /* Hardware trigger (gateware >= 0.2), else soft trigger. */
+	uint64_t hw_pretrigger;        /* Pre-trigger samples to send (hardware trigger). */
+	gboolean hw_known;             /* Trigger position in the stream known. */
+	uint64_t hw_skip;              /* Stream samples dropped before the pre-trigger samples. */
+	uint64_t hw_trigger_pos;       /* Trigger sample index in the stream. */
 	gboolean acq_done;
 	gboolean acq_running;           /* Session source added. */
 };

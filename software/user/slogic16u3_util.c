@@ -167,22 +167,92 @@ static uint16_t check_expected(unsigned pattern, uint64_t i, uint64_t divider)
     return (uint16_t)(i*divider);
 }
 
+/* Trigger reference (sigrok semantics) on the pattern generator: first matching sample index. */
+static int check_trigger_match(const struct slogic_trigger *t, unsigned ch, uint16_t p, uint16_t v, int have_prev)
+{
+    uint16_t m = (uint16_t)((1u << ch) - 1), edges = (t->rising | t->falling) & m;
+    if ((v & t->zero & m) || (~v & t->one & m))
+        return 0;
+    if (edges && (!have_prev || (edges & ~((t->rising & ~p & v) | (t->falling & p & ~v)))))
+        return 0;
+    return 1;
+}
+
+/* Hardware trigger self-test (pattern generator): trigger position, pre-trigger window and every sample
+   checked against the model. Returns 1 if OK. */
+static int check_trigger(struct slogic_dev *dev, const struct slogic_info *info, unsigned ch, uint64_t rate,
+                         const char *cond)
+{
+    struct slogic_config c = { .channels = ch, .samplerate = rate, .limit = 10000,
+                               .pattern = SLOGIC_PATTERN_GENERATOR, .trigger_enable = 1,
+                               .pretrigger = slogic_max_pretrigger(info, ch)/2 };
+    uint64_t divider = info->base_rate/rate, expected = 0, bad = 0, n;
+    struct slogic_status st;
+    const uint8_t *data;
+    size_t size, total = 0, cap = slogic_packed_bytes(ch, c.limit + c.pretrigger + 64) + 64*1024;
+    uint8_t *s = malloc(cap);
+    int r, ok;
+
+    slogic_trigger_parse(cond, &c.trigger);
+    for (uint64_t i = 0; i < 100000000; i++)
+        if (check_trigger_match(&c.trigger, ch, i ? slogic_generator_sample((i - 1)*divider) : 0,
+                                slogic_generator_sample(i*divider), i > 0)) {
+            expected = i;
+            break;
+        }
+    if ((r = slogic_capture_start(dev, &c)) == SLOGIC_OK) {
+        while ((r = slogic_capture_read(dev, &data, &size, 3000)) == SLOGIC_OK) {
+            if (total + size > cap)
+                size = cap - total;
+            memcpy(s + total, data, size);
+            total += size;
+        }
+    }
+    slogic_capture_status(dev, &st);
+    slogic_capture_stop(dev, NULL);
+    n = total*8/ch;
+    if (st.triggered && n > st.trigger_offset + c.limit)
+        n = st.trigger_offset + c.limit; /* 4 channels: padding nibble of the last byte. */
+    if (st.triggered && n == st.trigger_offset + c.limit) {
+        unsigned unit = slogic_unitsize(ch);
+        uint8_t *u = malloc(n*unit);
+        uint64_t first = st.trigger_sample - st.trigger_offset;
+        slogic_unpack(ch, s, 0, n, u);
+        for (uint64_t k = 0; k < n; k++) {
+            uint32_t v = unit == 2 ? (uint32_t)(u[2*k] | u[2*k + 1] << 8) : u[k];
+            bad += v != (slogic_generator_sample((first + k)*divider) & ((1u << ch) - 1));
+        }
+        free(u);
+    }
+    ok = r == SLOGIC_ERR_END && st.triggered && st.trigger_sample == expected &&
+         st.trigger_offset >= (c.pretrigger < expected ? c.pretrigger : expected) &&
+         n == st.trigger_offset + c.limit && !bad && !st.overflow;
+    printf("trigger   %2u ch ", ch);
+    print_rate("@ ", rate);
+    printf(": %s (%s: sample %llu, expected %llu, %llu pre-trigger, %llu samples, %llu errors%s)\n",
+           ok ? "OK" : "FAIL", cond, (unsigned long long)st.trigger_sample, (unsigned long long)expected,
+           (unsigned long long)st.trigger_offset, (unsigned long long)n, (unsigned long long)bad,
+           st.overflow ? ", overflow" : "");
+    free(s);
+    return ok;
+}
+
 /* Self-test: test pattern captures (counter and/or pattern generator) over all channel
-   modes/samplerates, every sample checked. */
+   modes/samplerates, every sample checked, hardware trigger (gateware >= 0.2). */
 static int cmd_check(uint64_t samples, const char *which)
 {
     struct slogic_dev *dev = open_dev();
     struct slogic_info info;
     uint64_t rates[64];
     unsigned patterns[2], npatterns = 0;
-    int failures = 0, tests = 0;
+    int failures = 0, tests = 0, triggers = !strcmp(which, "trigger") || !strcmp(which, "all");
 
     if (!strcmp(which, "counter") || !strcmp(which, "all"))
         patterns[npatterns++] = SLOGIC_PATTERN_COUNTER;
     if (!strcmp(which, "generator") || !strcmp(which, "all"))
         patterns[npatterns++] = SLOGIC_PATTERN_GENERATOR;
-    if (!npatterns) {
-        fprintf(stderr, "check: unknown pattern %s (counter, generator, all)\n", which);
+    if (!npatterns && !triggers) {
+        fprintf(stderr, "check: unknown pattern %s (counter, generator, trigger, all)\n", which);
         return 1;
     }
     slogic_get_info(dev, &info);
@@ -230,6 +300,35 @@ static int cmd_check(uint64_t samples, const char *which)
             tests++;
             free(s);
             free(u);
+        }
+    }
+    if (triggers && !slogic_has_trigger(&info)) {
+        printf("trigger: not supported by this gateware (0.2 or later), skipped\n");
+    } else if (triggers) {
+        /* Gray counter (CH6-CH15) = gray(700) with the 100MHz clock (CH5) high. */
+        static const char *gray700 = "CH5=1,CH6=0,CH7=1,CH8=0,CH9=0,CH10=0,CH11=1,CH12=1,CH13=1,CH14=1,CH15=1";
+        static const char *conds[] = { "CH1=f", "CH0=f", "CH3=e", "CH1=0,CH2=r" };
+        for (unsigned ch = 4; ch <= 16; ch *= 2) {
+            uint64_t max = slogic_max_samplerate(&info, ch);
+            uint64_t sel[3] = { max, max/4, 1000000 };
+            for (int i = 0; i < 3; i++) {
+                if (info.base_rate % sel[i])
+                    continue;
+                for (unsigned k = 0; k < sizeof(conds)/sizeof(conds[0]); k++) {
+                    failures += !check_trigger(dev, &info, ch, sel[i], conds[k]);
+                    tests++;
+                }
+            }
+            if (ch == 16) {
+                /* Early pattern, late pattern (with the PWM high: cycle 176*1024 + 700, full pre-trigger). */
+                /* (CH5: 100MHz clock, never high with the samples on the cycle starts below max/2.) */
+                char late[160];
+                snprintf(late, sizeof(late), "%s,CH4=1", gray700);
+                failures += !check_trigger(dev, &info, ch, max, gray700);
+                failures += !check_trigger(dev, &info, ch, max, late);
+                failures += !check_trigger(dev, &info, ch, max/4, late + strlen("CH5=1,"));
+                tests += 3;
+            }
         }
     }
     printf("%d/%d OK\n", tests - failures, tests);
@@ -443,7 +542,7 @@ static void help(void)
            "  status               Capture status.\n"
            "  reg <addr> [val]     Read/write a 32-bit register.\n"
            "  clock                Sample clock frequency (vs host clock).\n"
-           "  check [samples] [counter|generator|all]\n"
+           "  check [samples] [counter|generator|trigger|all]\n"
            "                       Self-test: test pattern captures, all modes/samplerates.\n"
            "  bench [ch] [MHz] [s] Throughput (continuous capture).\n"
            "  flash probe          Flash pads mapping probe, JEDEC ID.\n"

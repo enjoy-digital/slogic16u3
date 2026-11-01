@@ -48,6 +48,7 @@ Host stack (layered, C first):
 | 8  | Remote update            | Flash pads probe, update with verify (app region only), DFU loader client, recovery docs.             | Done (sim)        |
 | 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | In progress       |
 | 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
+| 11 | Hardware trigger (#1)    | Edge/level/pattern trigger, pre-trigger window in the capture FIFO, libslogic16u3/tools/sigrok/bridge. | Done (sim)        |
 
 ## Timing Closure (GW5AT-15B, Gowin 1.9.12.04)
 
@@ -119,7 +120,8 @@ pipelining (sample clock), MaxBurst 4.
 
 ## Ideas (beyond stock)
 
-- Hardware triggers (edge/pattern/sequence) with pre-trigger in BSRAM, sample-exact trigger position.
+- Hardware trigger follow-ups: multi-stage (sequence) triggers, trigger counter/holdoff, external trigger
+  input/output, deeper pre-trigger (RLE compressed pre-trigger window: no RAM on the board).
 - RLE compression (much longer captures on slow signals over the same USB bandwidth).
 - External clock (state analysis) on CH12 (global clock input), clock qualifier.
 - Output mode on spare channels (the inputs can be driven through the dividers; the internal pattern

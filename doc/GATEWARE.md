@@ -39,9 +39,10 @@ accuracy). `slogic16u3_util clock` measures the sample clock against the host cl
 |------------------------------|--------------------------------------------|-----------------------------------------------------------------------|
 | CRG                          | [crg.py](../gateware/crg.py)               | OSCA, POR, sys PLL, sample PLL + CLKDIV.                              |
 | Sampler                      | [sampler.py](../gateware/sampler.py)       | IDES8 per input: 8 samples per sample clock cycle (Q0 first).         |
-| Capture                      | [capture.py](../gateware/capture.py)       | Test pattern, decimation /N (any N), 4/8/16 channels, 32-bit packer, 64-bit words, limit, overflow. |
+| Capture                      | [capture.py](../gateware/capture.py)       | Test pattern, decimation /N (any N), hardware trigger, 4/8/16 channels, 32-bit packer, 64-bit words, limit, overflow. |
+| Trigger                      | [trigger.py](../gateware/trigger.py)       | Single stage trigger on the captured samples: per channel low/high/rising/falling/any edge, all ANDed (edge, level, pattern). |
 | Pattern Generator            | [generator.py](../gateware/generator.py)   | Capture source 2: UART, SPI, PWM, 100MHz clock, Gray counter at 800MS/s, restarts with each capture. |
-| Analyzer                     | [analyzer.py](../gateware/analyzer.py)     | Capture + CDC (64-bit: 400MB/s needs > 32 bits per sys cycle) + FIFO, info/control/status CSRs, sample clock counter. |
+| Analyzer                     | [analyzer.py](../gateware/analyzer.py)     | Capture + CDC (64-bit: 400MB/s needs > 32 bits per sys cycle) + FIFO (also the pre-trigger buffer), info/control/status CSRs, sample clock counter. |
 | USB3 Device                  | [usb3.py](../gateware/usb3.py)             | USB3-PIPE Device Core: EP0 Wishbone bridge, Bulk IN (64-bit).         |
 | Flash                        | [flash.py](../gateware/flash.py)           | SPI master, runtime pads mapping, 512-byte TX/RX buffers.             |
 
@@ -54,6 +55,7 @@ accuracy). `slogic16u3_util clock` measures the sample clock against the host cl
 - Wire format: sample-major, first sample on the LSBs (4ch: 2 samples per byte), 64-bit words on the
   Bulk IN endpoint, the last word flushed (padded) with a short packet.
 - Limit (48-bit) or continuous until stopped, overflow (FIFO full: data lost) stops the capture.
+- Hardware trigger (0.2), see below.
 - Test sources, end-to-end checks without probes (`slogic16u3_util check`: every sample checked):
   - Counter (pattern 1): sample i = i x divider (16-bit, masked).
   - Pattern generator (pattern 2): protocol-like signals at the base rate after the
@@ -64,6 +66,30 @@ accuracy). `slogic16u3_util clock` measures the sample clock against the host cl
     Decodable in sigrok/PulseView (`pattern=generator`). The input pins are not driven (input only
     standard, probes may be connected): the Sampler/IDES8 path itself is checked with real signals.
 
+## Hardware Trigger
+
+- Single stage, sigrok semantics: 4 conditions per channel (`trigger_level`: zero/one, `trigger_edge`:
+  rising/falling, both: any edge), channels without condition don't care, all the channels ANDed: edge,
+  level, pattern and pattern + edge triggers. Evaluated on the captured (decimated) samples, sample-exact
+  (first matching sample of the cycle), no edge on the first sample.
+- Pre-trigger window in the capture FIFO (no extra BSRAM): while armed nothing is streamed (USB link idle,
+  no host load), the oldest FIFO words are dropped; on the trigger the stream starts at word
+  max(0, W - `pretrigger`) (W: word holding the trigger sample) and goes on until `limit` (counted from
+  the trigger cycle start) or the stop. `trigger_count`: trigger sample index in the capture, the host
+  computes the trigger position in the stream from it (libslogic16u3: `trigger_offset`).
+- Depth: FIFO depth - 2 x 64 margin words (1920 words of 64 bits):
+
+  | Channels | Max pre-trigger samples | At the max samplerate | At 1MS/s |
+  |----------|-------------------------|-----------------------|----------|
+  | 16       | 7680                    | 38.4us (200MS/s)      | 7.7ms    |
+  | 8        | 15360                   | 38.4us (400MS/s)      | 15.4ms   |
+  | 4        | 30720                   | 38.4us (800MS/s)      | 30.7ms   |
+
+  Deeper pre-trigger: software trigger (libsigrok soft trigger, the driver falls back to it), unlimited
+  but the host processes the full stream. The post-trigger part is streamed (unlimited).
+- Status crossing: trigger_count/triggered/capture generation in one BusSynchronizer snapshot (a stale
+  status of the previous capture is ignored).
+
 ## Registers
 
 Fixed CSR map ([slogic_regs.h](../software/user/libslogic16u3/slogic_regs.h), checked against the generated
@@ -72,7 +98,7 @@ Fixed CSR map ([slogic_regs.h](../software/user/libslogic16u3/slogic_regs.h), ch
 | Bank           | Base   | Registers                                                                       |
 |----------------|--------|---------------------------------------------------------------------------------|
 | ctrl           | 0x0000 | reset, scratch, bus_errors.                                                     |
-| analyzer       | 0x0800 | magic ("SLOG"), version, config, base_rate, control, divider, limit (64), status, count (64), clk_count. |
+| analyzer       | 0x0800 | magic ("SLOG"), version, config, base_rate, control, divider, limit (64), status (+ triggered), count (64), clk_count, trigger, trigger_level, trigger_edge, pretrigger, trigger_count (64). |
 | flash          | 0x1000 | control (enable/pads/high), divider, xfer (length/hold), ctrl (start/release), status. |
 | usb3_phy       | 0x1800 | status (LTSSM state, U0, ready).                                                |
 | identifier_mem | 0x2000 | SoC identifier (one character per word).                                        |
@@ -89,6 +115,7 @@ BSRAMs on the GW5AT-15A).
 |--------------------------------|-------------|-------|------------|-----------|--------------|
 | USB3 only (`--no-analyzer --no-flash`, 1.9.10) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -  |
 | Full (place_option 3)          | 13222 (88%) | 34/35 | 74.7MHz    | 131.5MHz  | 101.8MHz     |
+| Full + hardware trigger (0.2, place_option 2, CRC-32 cascade) | 13823 (92%) | 34/35 | 75.9MHz | 143.9MHz | 106.4MHz |
 
 ¹ USB3 packets slots optimized out without the Analyzer.
 
@@ -97,6 +124,7 @@ parallel and keeps the one with the best margins (1.9.12: 4 of 5 meet the timing
 
 ## Simulation
 
-- `test/test_capture.py`, `test/test_flash.py`: cores against reference models (Migen).
+- `test/test_capture.py`, `test/test_trigger.py`, `test/test_flash.py`: cores against reference models (Migen,
+  the trigger window also with separate sample/sys clock domains).
 - `test/test_system.py`: USB3 host model (USB3-PIPE) ↔ Device Core (PHY stand-in, 64-bit Link Layer) ↔ the
   same SoC as the hardware target: CSR accesses over EP0, counter pattern captures over Bulk IN.

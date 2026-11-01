@@ -8,8 +8,8 @@
 
 Pipeline (sample clock domain, one input word of `ratio` samples every cycle):
 
-    samples -> Source (inputs/test pattern) -> Decimation (/divider) -> Limit -> Width (4/8/16 channels)
-            -> Packer (32-bit) -> Converter (data_width) -> source
+    samples -> Source (inputs/test pattern) -> Decimation (/divider) -> Trigger -> Limit
+            -> Width (4/8/16 channels) -> Packer (32-bit) -> Converter (data_width) -> source
 
 - Decimation: one sample kept every `divider` samples (divider >= 1, base rate/divider), the first sample
   of the capture is kept. With divider < ratio several samples are kept per cycle, compacted.
@@ -20,6 +20,12 @@ Pipeline (sample clock domain, one input word of `ratio` samples every cycle):
   configurations need (lanes 0-1: 16-bit, 2-3: 8-bit, 4-7: 4-bit).
 - Limit: capture stopped after `limit` samples (0: until disabled), the last word is flushed (padded)
   with `last` set.
+- Trigger (trigger_enable, gateware/trigger.py): the capture is armed until the trigger matches, the
+  samples captured while armed are streamed (the Analyzer keeps the pre-trigger window), `limit` then
+  counts the samples from the start of the trigger cycle (the decimated word holding the trigger sample,
+  up to ratio-1 samples before it: limit must be 0 or >= 16). `trigger_count`: index of the trigger
+  sample in the capture, valid with `triggered`; `gen` toggles on each start (identifies the capture of
+  the trigger status in the other clock domain).
 - Overflow: data word not accepted by the sink while capturing (sink not ready): capture stopped,
   `overflow` set (sticky until the next start), the last word flushed with `last`.
 
@@ -34,6 +40,8 @@ from migen import *
 from litex.gen import *
 
 from litex.soc.interconnect import stream
+
+from gateware.trigger import Trigger
 
 # Constants ----------------------------------------------------------------------------------------
 
@@ -69,6 +77,11 @@ class Capture(LiteXModule):
         self.divider = Signal(32)    # i: Decimation (>= 1, quasi-static).
         self.pattern = Signal(2)     # i: Samples source (quasi-static).
         self.limit   = Signal(cbits) # i: Samples to capture (0: no limit, quasi-static).
+        self.trigger_enable  = Signal()          # i: Trigger enable (quasi-static).
+        self.trigger_zero    = Signal(nchannels) # i: Trigger conditions (quasi-static, gateware/trigger.py).
+        self.trigger_one     = Signal(nchannels) # i
+        self.trigger_rising  = Signal(nchannels) # i
+        self.trigger_falling = Signal(nchannels) # i
 
         # Status.
         self.running  = Signal()      # o
@@ -76,6 +89,9 @@ class Capture(LiteXModule):
         self.overflow = Signal()      # o: Sink not ready while capturing (data lost).
         self.error    = Signal()      # o: More than 32 bits per cycle (invalid configuration).
         self.count    = Signal(cbits) # o: Captured samples.
+        self.triggered     = Signal()      # o: Trigger matched (with trigger_enable).
+        self.trigger_count = Signal(cbits) # o: Trigger sample index (valid with triggered).
+        self.gen           = Signal()      # o: Toggled on each start.
 
         # # #
 
@@ -175,19 +191,70 @@ class Capture(LiteXModule):
             d1_run.eq(s1_run),
         ]
 
+        # Trigger ----------------------------------------------------------------------------------
+        # Conditions masked to the channel mode (registered), match registered: aligned with d1b (d1
+        # delayed one cycle, the Limit stage input).
+        chmask = Signal(nchannels)
+        self.sync += Case(self.mode, {
+            CAPTURE_MODE_4CH  : chmask.eq(0x000f),
+            CAPTURE_MODE_8CH  : chmask.eq(0x00ff),
+            "default"         : chmask.eq(0xffff),
+        })
+        self.trigger = trigger = Trigger(d1, nchannels)
+        self.sync += [
+            trigger.zero.eq(self.trigger_zero       & chmask),
+            trigger.one.eq(self.trigger_one         & chmask),
+            trigger.rising.eq(self.trigger_rising   & chmask),
+            trigger.falling.eq(self.trigger_falling & chmask),
+        ]
+        self.comb += [
+            trigger.k.eq(d1_k),
+            trigger.run.eq(d1_run),
+        ]
+        d1b     = [Signal(lane_bits[j]) for j in range(ratio)]
+        d1b_k   = Signal(4)
+        d1b_run = Signal()
+        self.sync += [
+            [d1b[j].eq(d1[j]) for j in range(ratio)],
+            d1b_k.eq(d1_k),
+            d1b_run.eq(d1_run),
+        ]
+        armed   = Signal() # Waiting for the trigger.
+        hit     = Signal()
+        hit_pos = Signal(3)
+        t_count = Signal(cbits)
+        t_pos   = Signal(3)
+        t_stage = Signal()
+        self.comb += [
+            hit.eq(armed & (trigger.match != 0)),
+            # First matching lane (priority to the lowest).
+            hit_pos.eq(0),
+            [If(trigger.match[j], hit_pos.eq(j)) for j in reversed(range(ratio))],
+        ]
+        # trigger_count/triggered updated on the same edge (consistent snapshot for the CDC).
+        self.sync += [
+            self.trigger_count.eq(t_count + t_pos),
+            self.triggered.eq(t_stage),
+        ]
+
         # Limit ------------------------------------------------------------------------------------
-        # remaining: samples left (down counter), rem_small: remaining < 16 (registered).
+        # remaining: samples left (down counter), rem_small: remaining < 16 (registered). While armed,
+        # remaining is reloaded with the limit (counted from the trigger cycle).
         remaining = Signal(cbits)
         rem_small = Signal()
+        rem_hi_0  = Signal() # remaining < 32 (from the registers only: off the d2_k path).
+        rem_low_n = Signal(6)
         limit_en  = Signal()
         d2_k      = Signal(4)
         limited   = Signal()
         self.comb += [
-            If(limit_en & rem_small & (remaining[:5] <= d1_k),
+            rem_hi_0.eq(remaining[5:] == 0),
+            rem_low_n.eq(remaining[:5] - d2_k),
+            If(limit_en & rem_small & (remaining[:5] <= d1b_k),
                 d2_k.eq(remaining[:4]),
                 limited.eq(1),
             ).Else(
-                d2_k.eq(d1_k),
+                d2_k.eq(d1b_k),
             )
         ]
 
@@ -199,9 +266,9 @@ class Capture(LiteXModule):
         d3_run     = Signal()
         d3_limited = Signal()
         chunks = {
-            CAPTURE_MODE_4CH  : Cat(*[d1[j][:4] for j in range(8)]),
-            CAPTURE_MODE_8CH  : Cat(*[d1[j][:8] for j in range(4)]),
-            CAPTURE_MODE_16CH : Cat(*[d1[j][:16] for j in range(2)]),
+            CAPTURE_MODE_4CH  : Cat(*[d1b[j][:4] for j in range(8)]),
+            CAPTURE_MODE_8CH  : Cat(*[d1b[j][:8] for j in range(4)]),
+            CAPTURE_MODE_16CH : Cat(*[d1b[j][:16] for j in range(2)]),
         }
         nbits = Signal(8)
         mask  = Signal(32)
@@ -225,7 +292,7 @@ class Capture(LiteXModule):
             }),
             chunk_bits.eq(nbits),
             too_wide.eq(nbits > 32),
-            d3_run.eq(d1_run),
+            d3_run.eq(d1b_run),
             d3_limited.eq(limited),
         ]
 
@@ -255,7 +322,7 @@ class Capture(LiteXModule):
         d3_seen  = Signal() # Width stage data seen (end of the capture: d3_run falling).
         self.fsm = fsm = FSM(reset_state="IDLE")
         # Start: counters/packer cleared, the first decimated word reaches the limit stage on the
-        # first RUN cycle and the packer one cycle later.
+        # second RUN cycle and the packer one cycle later.
         fsm.act("IDLE",
             If(s0_start,
                 NextValue(self.overflow, 0),
@@ -269,17 +336,32 @@ class Capture(LiteXModule):
                 NextValue(d3_seen,  0),
                 NextValue(buf,   0),
                 NextValue(level, 0),
+                NextValue(armed,   self.trigger_enable),
+                NextValue(t_stage, 0),
+                NextValue(self.gen, ~self.gen),
                 NextState("RUN")
             )
         )
         fsm.act("RUN",
             self.running.eq(1),
-            # Limit stage (d1).
-            If(d1_run & ~stop_req,
+            # Limit stage (d1b).
+            If(d1b_run & ~stop_req,
                 NextValue(self.count, self.count + d2_k),
-                NextValue(remaining, remaining - d2_k),
-                NextValue(rem_small, (remaining - d2_k) < 16),
-                If(limited, NextValue(stop_req, 1))
+                If(armed & ~hit,
+                    NextValue(remaining, self.limit),
+                    NextValue(rem_small, self.limit < 16),
+                ).Else(
+                    NextValue(remaining, remaining - d2_k),
+                    # (remaining - d2_k) < 16 without the 48-bit result (d2_k <= ratio, timings).
+                    NextValue(rem_small, rem_hi_0 & (rem_low_n < 16)),
+                ),
+                If(limited, NextValue(stop_req, 1)),
+                If(hit,
+                    NextValue(armed,   0),
+                    NextValue(t_count, self.count),
+                    NextValue(t_pos,   hit_pos),
+                    NextValue(t_stage, 1),
+                )
             ),
             # Packer (width stage outputs).
             If(d3_run,
