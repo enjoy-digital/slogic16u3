@@ -17,6 +17,8 @@ to PulseView:
   channel modes, sample-exact limits, overflow detection, test pattern), raw Bulk IN streaming, CSRs over EP0.
 - **Hardware trigger**: edge/level/pattern on any channel, sample-exact, with a pre-trigger window in the capture
   FIFO (up to 7680/15360/30720 samples with 16/8/4 channels): nothing is streamed until the trigger.
+- **Outputs**: tristate AUX IOs (JST SH connector, 3.3V) and optional output channels (build option):
+  trigger out, multi-unit sync, delayed/periodic pulses, GPIO, loopback self-test of the inputs.
 - **Low level C access**: `libslogic16u3` (USB3 transport + a simulated device), `slogic16u3_util`/`slogic16u3_record` tools.
 - **sigrok/PulseView**: native libsigrok driver (`litex-slogic`), **ngscopeclient**: TwinLan bridge + scopehal
   driver.

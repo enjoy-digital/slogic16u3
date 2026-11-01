@@ -44,6 +44,16 @@ slogic_capture_start(dev, &cfg);
 
 Max pre-trigger: 7680/15360/30720 samples with 16/8/4 channels (the capture FIFO, doc/GATEWARE.md).
 
+Outputs (gateware 0.3): AUX0/AUX1, plus the output channels of the build. They are tristate until enabled:
+
+```c
+int out = slogic_output_find(&info, "AUX0");             /* slogic_output_count/name/channel. */
+struct slogic_output o = { .enable = 1, .source = SLOGIC_OUT_TRIGGER };
+slogic_output_timing(dev, 10, 0, 1, 0);                  /* Pulse width 10 cycles, delay 0 (100MHz cycles). */
+slogic_output_set(dev, out, &o);                         /* Trigger out from the next triggered capture. */
+slogic_outputs_off(dev);                                  /* All tristate. */
+```
+
 - Configuration checks (`slogic_config_check`: 800MHz/N, channel limits, trigger), samplerate lists, unpacking.
 - Raw CSR accesses (`slogic_read32/write32/read64/write64/read_burst/write_burst`), sample clock measurement.
 - Flash: pads probe, read/erase/program, application update (writes refused at/above 0x800000).
@@ -62,6 +72,11 @@ slogic16u3_util check                 # Self-test: counter + pattern generator c
 slogic16u3_util bench 16 200 5        # Throughput: 16 channels at 200MS/s for 5s (overflow reported).
 slogic16u3_util clock                 # Sample clock frequency vs host clock (ppm).
 slogic16u3_util reg 0x800             # Raw register access.
+slogic16u3_util out                   # Outputs: state, pad levels (AUX0/AUX1, output channels).
+slogic16u3_util out AUX0 trigger      # Trigger out (out timing <width> <delay> <period> <high>: cycles).
+slogic16u3_util out AUX1 periodic     # Reference ticks / square wave (period/high from out timing).
+slogic16u3_util out all off           # Back to tristate.
+slogic16u3_util loopback AUX0 CH0     # AUX0 wired to CH0: generator checked through the real input path.
 slogic16u3_util flash probe           # Flash pads mapping + JEDEC ID.
 slogic16u3_util flash update app.bin  # Remote update (see UPDATE.md).
 slogic16u3_util dfu dump backup.bin   # Full Flash backup from the Sipeed DFU loader (keep it private).
@@ -121,7 +136,7 @@ litex_cli --regs                                    # CSRs (build/csr.csv).
 
 | Test                               | What                                                                    |
 |------------------------------------|-------------------------------------------------------------------------|
-| `make -C software/user check`      | libslogic16u3 on the simulated device: configurations, captures (data checked), overflow, unpacking, Flash probe/update/region guard, pattern generator decoded (UART/SPI/clock/Gray), hardware trigger (positions, windows, checks). |
+| `make -C software/user check`      | libslogic16u3 on the simulated device: configurations, captures (data checked), overflow, unpacking, Flash probe/update/region guard, pattern generator decoded (UART/SPI/clock/Gray), hardware trigger (positions, windows, checks), outputs (discovery, set/get, readback captures). |
 | `test/test_sigrok.py`              | sigrok-cli + litex-slogic: scan, counter pattern captures 4/8/16 channels, pattern generator UART/SPI decoded, invalid configurations, hardware trigger and soft trigger fallback. |
 | `test/test_scopehal_bridge.py`     | Bridge protocol as libscopehal drives it: identification, free running and triggered waveforms. |
 | `test/test_regs.py`                | slogic_regs.h against the target csr.csv.                                |

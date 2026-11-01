@@ -50,13 +50,18 @@ No fabric clock input: accurate fabric clocks have to come from the GTR12 (TX fa
 - Stock firmware: adjustable threshold 0-6V through a 10-bit DAC (`dac = V/3.33/2*1024`): DAC pin/interface
   not identified yet.
 - The channels can be driven as outputs (~1.2V at the connector through the dividers, slogic16u3-trace).
+  - LVCMOS15UD33 is an input-only IO type (Gowin `iotable`: `input.csv` only), and IO types are fixed in the bitstream.
+  - Output channels are therefore a build option (`--outputs CHn,...`): LVCMOS33 tristate IOs.
+  - Drive is weak and low swing through the dividers: OK for scope triggers, 1.2/1.8V CMOS and SLogic16U3 inputs, not for 3.3V CMOS loads (V_IH 2V).
+  - While tristate, the pin still captures, with the LVCMOS33 threshold (~2V at the pin, ~4.3V at the connector).
+  - Level and drive at the connector: to be measured.
 
 ## Other IOs
 
 | Signal      | Ball | Notes                                                    |
 |-------------|------|----------------------------------------------------------|
 | LED (red)   | G14  | Active high.                                             |
-| UART TX/RX  | F14/E14 | On the 8-pin JST SH JTAG connector.                   |
+| UART TX/RX  | F14/E14 | On the 8-pin JST SH JTAG connector: AUX0/AUX1 tristate IOs (LVCMOS33, gateware 0.3). |
 | JTAG        | G2/G3/J2/J3 | Dedicated JTAG pins (FT2232H on the connector).   |
 | MODE button | RECONFIG_N (assumed) | Reconfiguration from the multiboot address. |
 

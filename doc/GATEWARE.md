@@ -41,6 +41,7 @@ accuracy). `slogic16u3_util clock` measures the sample clock against the host cl
 | Sampler                      | [sampler.py](../gateware/sampler.py)       | IDES8 per input: 8 samples per sample clock cycle (Q0 first).         |
 | Capture                      | [capture.py](../gateware/capture.py)       | Test pattern, decimation /N (any N), hardware trigger, 4/8/16 channels, 32-bit packer, 64-bit words, limit, overflow. |
 | Trigger                      | [trigger.py](../gateware/trigger.py)       | Single stage trigger on the captured samples: per channel low/high/rising/falling/any edge, all ANDed (edge, level, pattern). |
+| Output                       | [output.py](../gateware/output.py)         | Tristate outputs (AUX IOs, output channels): GPIO, trigger pulse (width/delay), armed, capture, periodic, generator channel. |
 | Pattern Generator            | [generator.py](../gateware/generator.py)   | Capture source 2: UART, SPI, PWM, 100MHz clock, Gray counter at 800MS/s, restarts with each capture. |
 | Analyzer                     | [analyzer.py](../gateware/analyzer.py)     | Capture + CDC (64-bit: 400MB/s needs > 32 bits per sys cycle) + FIFO (also the pre-trigger buffer), info/control/status CSRs, sample clock counter. |
 | USB3 Device                  | [usb3.py](../gateware/usb3.py)             | USB3-PIPE Device Core: EP0 Wishbone bridge, Bulk IN (64-bit).         |
@@ -90,6 +91,42 @@ accuracy). `slogic16u3_util clock` measures the sample clock against the host cl
 - Status crossing: trigger_count/triggered/capture generation in one BusSynchronizer snapshot (a stale
   status of the previous capture is ignored).
 
+## Outputs
+
+- **Pins:**
+  - AUX0/AUX1: the UART pins F14/E14 of the JST SH connector, LVCMOS33 with no divider, in every build.
+  - Output channels: `--outputs CH14,CH15` (max 4), built as LVCMOS33 tristate IOs, still captured (readback).
+- **Logic:** about 100 LUTs (13823 → 13926 with the AUX IOs): two down counters, per-output source multiplexers, and write-only timing registers (no read multiplexer).
+- **Tristate by default:** reset, reconfiguration and `out off` all go back to tristate (`out_ctrl.oe` = 0). The pads drive only once the host enables them.
+- **Sources** (per output, `out_sel`), evaluated on the sample clock (100MHz: 10ns):
+
+  | Source | Output |
+  |---|---|
+  | GPIO | Host level. |
+  | Trigger | Pulse of `width` cycles (≤ 255), `delay` cycles (< 2^24) after the hardware trigger. |
+  | Armed | High while waiting for the trigger. |
+  | Capture | High while capturing. |
+  | Periodic | High `high` cycles, then low `low` cycles (24-bit each, host: period/high), restarted on each capture start. |
+  | Generator | Pattern generator CH0-CH7, sample 0 of each cycle. |
+
+- **Fixed latencies** (gateware, pads and IDES8 excluded; `test/test_output.py`):
+
+  | Path | Latency |
+  |---|---|
+  | Trigger sample cycle at the Capture input → trigger pulse (delay 0) | 8 cycles (80ns) |
+  | Generator cycle → output | 1 cycle |
+  | Capture start (sample 0 cycle) → first periodic high | 3 cycles |
+  | Host CSR write → output | resynchronized to the sample clock (2 cycles) + USB control transfer (ms range) |
+
+  The loopback self-test (`slogic16u3_util loopback`) measures the whole path on hardware: output → pad → wire → input → IDES8.
+- **Electrical** (output channels): see doc/HARDWARE.md. The output goes through the input divider, giving ~1.2-1.5V at the connector with weak drive. The pin captures with the LVCMOS33 threshold (~4.3V at the connector).
+- **Uses:**
+  - Trigger out for a scope.
+  - Multi-unit sync: unit A's trigger out goes to a channel of unit B, which hardware-triggers on it. The two captures are then aligned to ±1 sample, plus a fixed latency.
+  - Delayed events.
+  - Reference ticks.
+  - Loopback self-test of the inputs.
+
 ## Registers
 
 Fixed CSR map ([slogic_regs.h](../software/user/libslogic16u3/slogic_regs.h), checked against the generated
@@ -98,7 +135,7 @@ Fixed CSR map ([slogic_regs.h](../software/user/libslogic16u3/slogic_regs.h), ch
 | Bank           | Base   | Registers                                                                       |
 |----------------|--------|---------------------------------------------------------------------------------|
 | ctrl           | 0x0000 | reset, scratch, bus_errors.                                                     |
-| analyzer       | 0x0800 | magic ("SLOG"), version, config, base_rate, control, divider, limit (64), status (+ triggered), count (64), clk_count, trigger, trigger_level, trigger_edge, pretrigger, trigger_count (64). |
+| analyzer       | 0x0800 | magic ("SLOG"), version, config, base_rate, control, divider, limit (64), status (+ triggered), count (64), clk_count, trigger, trigger_level, trigger_edge, pretrigger, trigger_count (64), out_config, out_ctrl, out_sel, out_pulse/out_high/out_low (write-only), out_levels. |
 | flash          | 0x1000 | control (enable/pads/high), divider, xfer (length/hold), ctrl (start/release), status. |
 | usb3_phy       | 0x1800 | status (LTSSM state, U0, ready).                                                |
 | identifier_mem | 0x2000 | SoC identifier (one character per word).                                        |
@@ -116,6 +153,8 @@ BSRAMs on the GW5AT-15A).
 | USB3 only (`--no-analyzer --no-flash`, 1.9.10) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -  |
 | Full (place_option 3)          | 13222 (88%) | 34/35 | 74.7MHz    | 131.5MHz  | 101.8MHz     |
 | Full + hardware trigger (0.2, place_option 2, CRC-32 cascade) | 13823 (92%) | 34/35 | 75.9MHz | 143.9MHz | 106.4MHz |
+| Full + outputs (0.3, AUX IOs, place_option 2) | 13973 (92%) | 34/35 | 71.5MHz | 143.7MHz | 132.1MHz |
+| Full + outputs + `--outputs CH14,CH15` (place_option 2) | 13970 (92%) | 34/35 | 63.2MHz | 134.6MHz | 128.0MHz |
 
 ¹ USB3 packets slots optimized out without the Analyzer.
 
@@ -124,7 +163,7 @@ parallel and keeps the one with the best margins (1.9.12: 4 of 5 meet the timing
 
 ## Simulation
 
-- `test/test_capture.py`, `test/test_trigger.py`, `test/test_flash.py`: cores against reference models (Migen,
-  the trigger window also with separate sample/sys clock domains).
+- `test/test_capture.py`, `test/test_trigger.py`, `test/test_output.py`, `test/test_flash.py`: cores against
+  reference models (Migen, the trigger window also with separate sample/sys clock domains, output latencies).
 - `test/test_system.py`: USB3 host model (USB3-PIPE) ↔ Device Core (PHY stand-in, 64-bit Link Layer) ↔ the
   same SoC as the hardware target: CSR accesses over EP0, counter pattern captures over Bulk IN.

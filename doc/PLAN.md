@@ -49,6 +49,7 @@ Host stack (layered, C first):
 | 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | In progress       |
 | 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
 | 11 | Hardware trigger (#1)    | Edge/level/pattern trigger, pre-trigger window in the capture FIFO, libslogic16u3/tools/sigrok/bridge. | Done (sim)        |
+| 12 | Outputs                  | Tristate AUX IOs + output channels (build option): trigger out, sync, periodic, GPIO, loopback test.   | Done (sim)        |
 
 ## Timing Closure (GW5AT-15B, Gowin 1.9.12.04)
 
