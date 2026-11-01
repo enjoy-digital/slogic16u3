@@ -8,9 +8,11 @@
 
 """Build the gateware with several Gowin place algorithms in parallel (Gowin PnR has no seed, the design
 fills ~90% of the GW5AT-15: timings depend on the placement) and keep the one with the best margins (worst
-fmax/constraint ratio) in build/.
+fmax/constraint ratio) in build/. Each place algorithm is built with each route algorithm (default: 1 and 2,
+in parallel): at ~90% of the GW5AT-15, a placement can fail to route (congestion) or miss the timings with
+one route algorithm and succeed with the other.
 
-    ./scripts/build_best.py [--options 0 1 2 3 4] [-- extra slogic_16u3.py arguments]
+    ./scripts/build_best.py [--options 0 1 2 3 4] [--route-options 1 2] [-- extra slogic_16u3.py arguments]
 """
 
 import os
@@ -44,24 +46,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--options",    nargs="+", type=int, default=[0, 1, 2, 3, 4], help="Gowin place algorithms.")
     parser.add_argument("--output-dir", default=os.path.join(ROOT, "build"),       help="Build directory.")
+    parser.add_argument("--route-options", nargs="+", type=int, default=[1, 2], help="Gowin route algorithms.")
     parser.add_argument("extra",        nargs=argparse.REMAINDER,                  help="slogic_16u3.py arguments.")
     args  = parser.parse_args()
     extra = [a for a in args.extra if a != "--"]
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output_dir)), exist_ok=True)
+    env = dict(os.environ)
+    env.setdefault("QT_QPA_PLATFORM", "offscreen") # gw_sh (Qt) without a display.
     procs = {}
-    for opt in args.options:
-        d = f"{args.output_dir}_place{opt}"
-        log = open(f"{d}.log", "w")
-        procs[opt] = (d, subprocess.Popen([sys.executable, os.path.join(ROOT, "slogic_16u3.py"), "--build",
-            "--output-dir", d, "--place-option", str(opt)] + extra, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT))
+    for place in args.options:
+        for route in args.route_options:
+            d   = f"{args.output_dir}_place{place}_route{route}"
+            log = open(f"{d}.log", "w")
+            cmd = [sys.executable, os.path.join(ROOT, "slogic_16u3.py"), "--build", "--output-dir", d,
+                "--place-option", str(place), "--route-option", str(route)] + extra
+            procs[(place, route)] = (d, subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT,
+                env=env))
     results = {}
-    for opt, (d, p) in procs.items():
+    for (place, route), (d, p) in procs.items():
         p.wait()
         s = fmax_summary(d) if p.returncode == 0 else None
-        results[opt] = (d, s)
+        results[(place, route)] = (d, s)
         state = "failed" if s is None else ", ".join(f"{k} {v[1]:.1f}/{v[0]:.1f}MHz" for k, v in s.items())
-        print(f"place_option {opt}: {state}")
+        met   = "" if s is None else (" [met]" if worst_ratio(s) >= 1.0 else " [NOT MET]")
+        print(f"place_option {place} route_option {route}: {state}{met}", flush=True)
 
     ok = {o: r for o, r in results.items() if r[1] is not None}
     if not ok:
@@ -69,7 +78,10 @@ def main():
         return 1
     best = max(ok, key=lambda o: worst_ratio(ok[o][1]))
     met  = worst_ratio(ok[best][1]) >= 1.0
-    print(f"Best: place_option {best} ({'timings met' if met else 'TIMINGS NOT MET'}) -> {args.output_dir}")
+    nmet = sum(worst_ratio(r[1]) >= 1.0 for r in ok.values())
+    print(f"Timings met: {nmet}/{len(results)} builds.")
+    print(f"Best: place_option {best[0]} route_option {best[1]} ({'timings met' if met else 'TIMINGS NOT MET'})"
+        f" -> {args.output_dir}")
     if os.path.exists(args.output_dir):
         shutil.rmtree(args.output_dir)
     shutil.copytree(ok[best][0], args.output_dir)
