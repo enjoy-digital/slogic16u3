@@ -32,18 +32,18 @@ from litex.gen import *
 class Trigger(LiteXModule):
     def __init__(self, lanes, nchannels=16):
         n = len(lanes)
-        self.k       = Signal(4)         # i: Valid lanes (lanes[0:k]).
-        self.run     = Signal()          # i: Capture data running (low: previous sample cleared).
-        self.zero    = Signal(nchannels) # i: Conditions (quasi-static, masked to the channel mode).
-        self.one     = Signal(nchannels) # i
-        self.rising  = Signal(nchannels) # i
-        self.falling = Signal(nchannels) # i
-        self.match   = Signal(n)         # o: Matching lanes (registered, valid lanes only).
+        self.k       = Signal(4)                          # i: Valid lanes (lanes[0:k]).
+        self.run     = Signal()                           # i: Capture data running (low: previous sample cleared).
+        self.zero    = Signal(nchannels, reset_less=True) # i: Conditions (quasi-static, channel mode masked).
+        self.one     = Signal(nchannels, reset_less=True) # i
+        self.rising  = Signal(nchannels, reset_less=True) # i
+        self.falling = Signal(nchannels, reset_less=True) # i
+        self.match   = Signal(n)                          # o: Matching lanes (registered, valid lanes only).
 
         # # #
 
         # Previous sample (last valid lane of the previous cycle).
-        last      = Signal(nchannels)
+        last      = Signal(nchannels, reset_less=True)
         have_last = Signal()
         self.sync += [
             If(~self.run,

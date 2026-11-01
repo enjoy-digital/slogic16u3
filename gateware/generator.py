@@ -43,7 +43,7 @@ class PatternGenerator(LiteXModule):
         assert nchannels == 16
         assert ratio == 8
         self.enable = Signal()                 # i: Running (low: held at the origin, sample 0).
-        self.word   = Signal(ratio*nchannels)  # o: Samples of the cycle (registered), first on the LSBs.
+        self.word   = Signal(ratio*nchannels, reset_less=True) # o: Samples of the cycle (registered), first on the LSBs.
 
         # # #
 

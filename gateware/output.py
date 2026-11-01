@@ -71,7 +71,7 @@ class Output(LiteXModule):
         # Trigger Pulse ----------------------------------------------------------------------------
         # One down counter: delay, then width (pulse: trigger + 2 + delay cycles, then width cycles).
         pls_phase = Signal(2) # 0: idle, 1: delay, 2: pulse.
-        pls_cnt   = Signal(24)
+        pls_cnt   = Signal(24, reset_less=True)
         pulse     = Signal()
         self.sync += [
             If(self.start,
@@ -97,11 +97,11 @@ class Output(LiteXModule):
         # Periodic ---------------------------------------------------------------------------------
         # One down counter: high cycles high, then low cycles low (restarted high on start).
         per_high = Signal()
-        per_cnt  = Signal(24)
-        high_m1  = Signal(24)
-        low_m1   = Signal(24)
-        high_0   = Signal()
-        low_0    = Signal()
+        per_cnt  = Signal(24, reset_less=True)
+        high_m1  = Signal(24, reset_less=True)
+        low_m1   = Signal(24, reset_less=True)
+        high_0   = Signal(reset_less=True)
+        low_0    = Signal(reset_less=True)
         periodic = Signal()
         self.sync += [
             high_m1.eq(self.high - 1),

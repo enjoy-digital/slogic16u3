@@ -20,7 +20,7 @@ from litex.gen import *
 class GW5ASampler(LiteXModule):
     def __init__(self, pads, nchannels=16, ratio=8, cd="sample", cd_fast="sample_fast"):
         assert ratio == 8
-        self.samples = Signal(ratio*nchannels) # o: Samples (cd clock domain).
+        self.samples = Signal(ratio*nchannels, reset_less=True) # o: Samples (cd clock domain).
 
         # # #
 

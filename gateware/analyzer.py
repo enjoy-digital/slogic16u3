@@ -165,34 +165,37 @@ class Analyzer(LiteXModule):
         # Pre-trigger window -----------------------------------------------------------------------
         # head: FIFO words read (forwarded or dropped) since the start, target: first word of the
         # window (registered from the trigger status, valid with trig_ok, 2 cycles after triggered).
-        head      = Signal(cbits)
-        trig_word = Signal(cbits)
-        target    = Signal(cbits)
+        # 16-bit modular counts: target - head stays within the FIFO depth (head trails the written
+        # words by at most the FIFO level), its sign gives head < target (early trigger: target
+        # "negative", nothing dropped: the stream starts at word 0).
+        wbits     = 16
+        head      = Signal(wbits, reset_less=True)
+        trig_word = Signal(wbits, reset_less=True)
+        target    = Signal(wbits, reset_less=True)
+        diff      = Signal(wbits)
         trig_d    = Signal(2)
         trig_ok   = Signal()
         forward   = Signal()
         drop      = Signal()
-        threshold = Signal(17)
+        threshold = Signal(17, reset_less=True)
         spw_log2  = {0: 4, 1: 3, 2: 2} # log2(samples per 64-bit word) per channel mode.
         assert data_width == 64
+        assert fifo_depth < 2**(wbits - 2)
         self.sync += [
             Case(self.mode, {
                 0         : trig_word.eq(self.trigger_count[spw_log2[0]:]),
                 1         : trig_word.eq(self.trigger_count[spw_log2[1]:]),
                 "default" : trig_word.eq(self.trigger_count[spw_log2[2]:]),
             }),
-            If(trig_word >= self.pretrigger,
-                target.eq(trig_word - self.pretrigger)
-            ).Else(
-                target.eq(0)
-            ),
+            target.eq(trig_word - self.pretrigger),
             trig_d.eq(Cat(self.triggered & ~self.start, trig_d[0] & self.triggered & ~self.start)),
             threshold.eq(self.pretrigger + PRETRIGGER_MARGIN),
         ]
         self.comb += [
             trig_ok.eq(trig_d[1]),
+            diff.eq(target - head),
             If(trig_ok,
-                drop.eq(head < target)
+                drop.eq((diff != 0) & ~diff[wbits - 1]) # head < target.
             ).Else(
                 drop.eq(fifo.level > threshold)
             ),
