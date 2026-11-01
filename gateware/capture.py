@@ -92,6 +92,8 @@ class Capture(LiteXModule):
         self.triggered     = Signal()      # o: Trigger matched (with trigger_enable).
         self.trigger_count = Signal(cbits) # o: Trigger sample index (valid with triggered).
         self.gen           = Signal()      # o: Toggled on each start.
+        self.armed         = Signal()      # o: Waiting for the trigger.
+        self.trigger_pulse = Signal()      # o: Trigger matched (pulse, registered: trigger cycle + 1).
 
         # # #
 
@@ -232,6 +234,7 @@ class Capture(LiteXModule):
             [If(trigger.match[j], hit_pos.eq(j)) for j in reversed(range(ratio))],
         ]
         # trigger_count/triggered updated on the same edge (consistent snapshot for the CDC).
+        self.comb += self.armed.eq(armed)
         self.sync += [
             self.trigger_count.eq(t_count + t_pos),
             self.triggered.eq(t_stage),
@@ -400,3 +403,6 @@ class Capture(LiteXModule):
                 NextState("IDLE")
             )
         )
+
+        # Trigger Pulse (Output core: trigger out) -------------------------------------------------
+        self.sync += self.trigger_pulse.eq(hit & d1b_run & ~stop_req)

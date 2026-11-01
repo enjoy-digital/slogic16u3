@@ -68,7 +68,7 @@ class TestRegs(unittest.TestCase):
                 continue
             self.assertEqual(value, regs[csr][0], csr)
             checked += 1
-        self.assertGreaterEqual(checked, 23)
+        self.assertGreaterEqual(checked, 31)
 
         # 64-bit registers.
         for csr in ["analyzer_limit", "analyzer_count", "analyzer_trigger_count"]:
@@ -76,3 +76,32 @@ class TestRegs(unittest.TestCase):
 
         # Flash buffer.
         self.assertEqual(mems["flash_buffer"], (h["SLOGIC_FLASH_BUFFER_BASE"], h["SLOGIC_FLASH_BUFFER_SIZE"]))
+
+    def test_outputs_build(self):
+        # Output channels build: same CSR map, LVCMOS33 output channels (others input only), AUX IOs,
+        # tristate buffers (IOBUF) on the AUX IOs and the output channels.
+        def elaborate(**kwargs):
+            platform = sipeed_slogic16u3.Platform(toolchain="gowin")
+            soc      = SLogicSoC(platform, **kwargs)
+            with tempfile.TemporaryDirectory() as d:
+                builder = Builder(soc, output_dir=d, csr_csv=os.path.join(d, "csr.csv"))
+                builder.build(run=False)
+                csv = [l for l in open(os.path.join(d, "csr.csv")).read().splitlines() if l.startswith("csr_")]
+                cst = open(os.path.join(d, "gateware", "sipeed_slogic16u3.cst")).read()
+                v   = open(os.path.join(d, "gateware", "sipeed_slogic16u3.v")).read()
+            return csv, cst, v
+        csv0, cst0, v0 = elaborate()
+        csv1, cst1, v1 = elaborate(outputs=[14, 15])
+        self.assertEqual(csv0, csv1)
+        for i in range(16):
+            std = "LVCMOS33" if i in [14, 15] else "LVCMOS15UD33"
+            self.assertIn(f'IO_PORT "la_ch{i}" IO_TYPE={std};', cst1)
+        for cst in [cst0, cst1]:
+            self.assertIn('IO_PORT "serial_tx" IO_TYPE=LVCMOS33;', cst)
+            self.assertIn('IO_PORT "serial_rx" IO_TYPE=LVCMOS33;', cst)
+        for i in range(16): # Default build: all the channels input only.
+            self.assertIn(f'IO_PORT "la_ch[{i}]" IO_TYPE=LVCMOS15UD33;', cst0)
+        iobufs = lambda v: len(re.findall(r"^IOBUF\b", v, re.M))
+        self.assertEqual(iobufs(v1) - iobufs(v0), 2)
+        with self.assertRaises(AssertionError):
+            elaborate(outputs=[0, 1, 2, 3, 4])

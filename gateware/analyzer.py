@@ -17,6 +17,8 @@
   Once the trigger status reaches sys, the words before word W - pretrigger are dropped (W: word of the
   trigger sample, packing contiguous from the capture start) and the stream is forwarded: the stream
   starts at word max(0, W - pretrigger), the host computes the trigger offset from trigger_count.
+- Outputs (gateware/output.py, outputs > 0): tristate outputs (AUX IOs, output channels) driven from the
+  capture events in the cd clock domain (out_o/out_oe to the pads, out_i: pad levels readback).
 - Sample clock counter (Gray coded, 32-bit): sample clock frequency measured by the host against its own
   time base (the sample clock accuracy is the samplerate accuracy).
 """
@@ -31,11 +33,12 @@ from litex.soc.interconnect     import stream
 
 from gateware.capture   import Capture
 from gateware.generator import PatternGenerator
+from gateware.output    import Output
 
 # Constants ----------------------------------------------------------------------------------------
 
 ANALYZER_MAGIC   = 0x534c4f47 # "SLOG".
-ANALYZER_VERSION = 0x00000002 # Major[31:16], Minor[15:0] (0.2: hardware trigger).
+ANALYZER_VERSION = 0x00000003 # Major[31:16], Minor[15:0] (0.2: hardware trigger, 0.3: outputs).
 
 PRETRIGGER_MARGIN = 64 # FIFO words kept above the pre-trigger window while armed (CDC/status latency).
 
@@ -43,7 +46,7 @@ PRETRIGGER_MARGIN = 64 # FIFO words kept above the pre-trigger window while arme
 
 class Analyzer(LiteXModule):
     def __init__(self, nchannels=16, ratio=8, data_width=64, base_rate=800e6, fifo_depth=2048,
-        cd="sample"):
+        cd="sample", naux=0, output_channels=[]):
         self.samples = Signal(ratio*nchannels)                     # i: Samples (cd clock domain).
         self.source  = source = stream.Endpoint([("data", data_width)]) # o: Data (sys clock domain).
         self.start   = Signal()                                    # o: Capture start (sys, pulse).
@@ -213,6 +216,57 @@ class Analyzer(LiteXModule):
             )
         ]
 
+        # Outputs ----------------------------------------------------------------------------------
+        # Outputs 0..naux-1: AUX IOs, then the output channels (ascending). Controls resynchronized to
+        # cd (quasi-static, gpio/oe: a few cycles of latency from the host), pad levels to sys.
+        self.naux            = naux
+        self.output_channels = sorted(output_channels)
+        self.noutputs        = n = naux + len(self.output_channels)
+        self.out_o      = Signal(max(n, 1)) # o: Output levels (cd).
+        self.out_oe     = Signal(max(n, 1)) # o: Output enables (cd).
+        self.out_i      = Signal(max(n, 1)) # i: Pad levels (cd, readback).
+        self.out_ctrl   = Signal(24)        # oe[0:8], invert[8:16], gpio[16:24] (sys).
+        self.out_sel    = Signal(32)
+        self.out_pulse  = Signal(32)        # delay[0:24], width[24:32] (sys).
+        self.out_high   = Signal(24)
+        self.out_low    = Signal(24)
+        self.out_levels = Signal(8)         # Pad levels (sys).
+        if n:
+            self.output = output = ClockDomainsRenamer(cd)(Output(n))
+            out_start = Signal()
+            enable_cd = Signal()
+            sync = getattr(self.sync, cd)
+            sync += enable_cd.eq(capture.enable)
+            self.comb += [
+                out_start.eq(capture.enable & ~enable_cd),
+                output.start.eq(out_start),
+                output.trigger.eq(capture.trigger_pulse),
+                output.armed.eq(capture.armed),
+                output.running.eq(capture.running),
+                output.generator.eq(generator.word[0:8]),
+                self.out_o.eq(output.o),
+                self.out_oe.eq(output.oe_o),
+            ]
+            out_controls = [
+                (self.out_ctrl[0:n],       output.oe),
+                (self.out_ctrl[8:8 + n],   output.invert),
+                (self.out_ctrl[16:16 + n], output.gpio),
+                (self.out_sel[:4*n],       output.sel),
+                (self.out_pulse[24:32],    output.width),
+                (self.out_pulse[0:24],     output.delay),
+                (self.out_high,            output.high),
+                (self.out_low,             output.low),
+            ]
+            for i, o in out_controls:
+                if cd == "sys":
+                    self.comb += o.eq(i)
+                else:
+                    self.specials += MultiReg(i, o, cd)
+            if cd == "sys":
+                self.comb += self.out_levels[:n].eq(self.out_i)
+            else:
+                self.specials += MultiReg(self.out_i, self.out_levels[:n])
+
         # Sample Clock Counter ---------------------------------------------------------------------
         self.clk_count = Signal(32)
         if cd == "sys":
@@ -283,6 +337,24 @@ class Analyzer(LiteXModule):
         ])
         self._pretrigger    = CSRStorage(16, description="Pre-trigger window (64-bit words, < FIFO depth - 2*margin).")
         self._trigger_count = CSRStatus(64,  description="Trigger sample index in the capture (valid when triggered).")
+
+        # Outputs (appended: the registers above keep their addresses).
+        channels_mask = sum(1 << c for c in self.output_channels)
+        self._out_config = CSRStatus(fields=[
+            CSRField("channels", size=16, offset=0,  reset=channels_mask, description="Output channels (mask)."),
+            CSRField("naux",     size=4,  offset=16, reset=self.naux,     description="AUX IOs (outputs 0..naux-1)."),
+        ])
+        self._out_ctrl = CSRStorage(fields=[
+            CSRField("oe",     size=8, offset=0,  description="Output enables (0: tristate)."),
+            CSRField("invert", size=8, offset=8,  description="Output inverts."),
+            CSRField("gpio",   size=8, offset=16, description="GPIO levels (source 0)."),
+        ])
+        self._out_sel    = CSRStorage(32, description="Output sources (4 bits per output, gateware/output.py).")
+        # Timings (sample clock cycles): write-only (no read multiplexer: logic).
+        self._out_pulse  = CSR(32) # Trigger pulse delay[0:24], width[24:32].
+        self._out_high   = CSR(24) # Periodic high time.
+        self._out_low    = CSR(24) # Periodic low time.
+        self._out_levels = CSRStatus(8, description="Pad levels (readback).")
         self.comb += [
             self.enable.eq(self._control.fields.enable),
             self.mode.eq(self._control.fields.mode),
@@ -303,4 +375,12 @@ class Analyzer(LiteXModule):
             self.pretrigger.eq(self._pretrigger.storage),
             self._status.fields.triggered.eq(self.triggered),
             self._trigger_count.status.eq(self.trigger_count),
+            self.out_ctrl.eq(self._out_ctrl.storage),
+            self.out_sel.eq(self._out_sel.storage),
+            self._out_levels.status.eq(self.out_levels),
+        ]
+        self.sync += [
+            If(self._out_pulse.re, self.out_pulse.eq(self._out_pulse.r)),
+            If(self._out_high.re,  self.out_high.eq(self._out_high.r)),
+            If(self._out_low.re,   self.out_low.eq(self._out_low.r)),
         ]
