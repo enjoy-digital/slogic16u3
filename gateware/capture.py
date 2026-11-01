@@ -171,12 +171,16 @@ class Capture(LiteXModule):
             skip1_lo.eq(Mux(skip_cur[3:] != 0, ratio, skip_cur[:3])),
         ]
         pos   = [Signal(7) for _ in range(ratio)]
-        valid = Signal(ratio)
-        k     = Signal(4)
+        # Kept samples in the cycle: k = ceil((ratio - skip)/divsat) (positions < ratio), from a table of
+        # the registered skip and the quasi-static divsat (timings: no adders/compares/popcount).
+        k       = Signal(4)
+        k_cases = {"default": k.eq(0)}
+        for sk in range(ratio):
+            for ds in range(1, ratio + 1):
+                k_cases[(ds << 4) | sk] = k.eq(-(-(ratio - sk)//ds))
         self.comb += [
             [pos[j].eq(skip1_lo + j*divsat) for j in range(ratio)],
-            [valid[j].eq(pos[j] < ratio) for j in range(ratio)],
-            k.eq(Reduce("ADD", [valid[j] for j in range(ratio)])),
+            Case(Cat(skip1_lo, divsat), k_cases),
         ]
 
         # Decimated samples (compacted: d1[0:d1_k] valid), registered, lanes sized for the valid

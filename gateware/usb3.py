@@ -20,6 +20,7 @@ from litex.gen import *
 
 from litex.soc.interconnect.csr import *
 from litex.soc.interconnect     import stream
+from litex.soc.interconnect     import wishbone
 
 # Constants ----------------------------------------------------------------------------------------
 
@@ -68,8 +69,25 @@ class USB3Device(LiteXModule):
             crc32_cascade    = True)
 
         # EP0 Wishbone Bridge ----------------------------------------------------------------------
+        # Registered to the SoC bus (timings: the bridge address/data come from its FIFO memory, the
+        # CSR decoders/read multiplexers behind): +1 cycle per access, strobe dropped on ack (no
+        # repeated access).
         self.wishbone = USB3EP0Wishbone(core.ep0)
-        self.bus      = self.wishbone.bus
+        self.bus = bus = wishbone.Interface(data_width=32, address_width=32, addressing="word")
+        master = self.wishbone.bus
+        self.sync += [
+            bus.adr.eq(master.adr),
+            bus.dat_w.eq(master.dat_w),
+            bus.sel.eq(master.sel),
+            bus.we.eq(master.we),
+            bus.cyc.eq(master.cyc & ~bus.ack),
+            bus.stb.eq(master.stb & master.cyc & ~bus.ack),
+        ]
+        self.comb += [
+            master.ack.eq(bus.ack),
+            master.err.eq(bus.err),
+            master.dat_r.eq(bus.dat_r),
+        ]
 
         # Bulk IN ----------------------------------------------------------------------------------
         self.comb += [
