@@ -478,6 +478,88 @@ static void test_trigger(void)
     slogic_close(dev);
 }
 
+/* Outputs (sim, as the gateware): discovery, set/get, readback captures (periodic, trigger pulse). */
+static void test_outputs(void)
+{
+    struct slogic_dev *dev = open_sim("sim:fast,outputs=c000");
+    struct slogic_info info;
+    struct slogic_output o;
+    char name[16];
+
+    CHECK_OK(slogic_get_info(dev, &info));
+    CHECK(slogic_output_count(&info) == 4);
+    CHECK(info.naux == 2 && info.output_channels == 0xc000);
+    CHECK_OK(slogic_output_name(&info, 0, name, sizeof(name)));
+    CHECK(!strcmp(name, "AUX0"));
+    CHECK_OK(slogic_output_name(&info, 3, name, sizeof(name)));
+    CHECK(!strcmp(name, "CH15"));
+    CHECK(slogic_output_find(&info, "ch14") == 2);
+    CHECK(slogic_output_find(&info, "CH13") < 0);
+    CHECK(slogic_output_channel(&info, 1) < 0 && slogic_output_channel(&info, 2) == 14);
+    unsigned src;
+    CHECK_OK(slogic_output_source_parse("gen7", &src));
+    CHECK(src == SLOGIC_OUT_GENERATOR + 7);
+    CHECK(slogic_output_source_parse("gen8", &src) == SLOGIC_ERR_ARG);
+
+    /* Tristate by default. */
+    for (unsigned i = 0; i < 4; i++) {
+        CHECK_OK(slogic_output_get(dev, i, &o));
+        CHECK(!o.enable);
+    }
+    /* Set/get, GPIO level readback. */
+    struct slogic_output g = { .enable = 1, .source = SLOGIC_OUT_GPIO, .level = 1 };
+    CHECK_OK(slogic_output_set(dev, 0, &g));
+    CHECK_OK(slogic_output_get(dev, 0, &o));
+    CHECK(o.enable && o.source == SLOGIC_OUT_GPIO && o.level == 1 && !o.invert);
+    uint32_t levels;
+    CHECK_OK(slogic_output_levels(dev, &levels));
+    CHECK(levels & 1);
+
+    /* Periodic on CH15 (period 10, high 3, inverted: low 3 of 10), trigger pulse on CH14 (CH1 falling:
+     * sample 512 at 100MS/s, 16 channels: one sample per cycle). */
+    struct slogic_output p = { .enable = 1, .source = SLOGIC_OUT_PERIODIC, .invert = 1 };
+    struct slogic_output t = { .enable = 1, .source = SLOGIC_OUT_TRIGGER };
+    CHECK_OK(slogic_output_timing(dev, 5, 20, 10, 3));
+    CHECK_OK(slogic_output_set(dev, 3, &p));
+    CHECK_OK(slogic_output_set(dev, 2, &t));
+    struct slogic_config c = { .channels = 16, .samplerate = 100000000, .limit = 2000,
+                               .pattern = SLOGIC_PATTERN_GENERATOR, .trigger_enable = 1, .pretrigger = 600 };
+    struct slogic_status st;
+    uint8_t *data;
+    uint64_t n;
+    CHECK_OK(slogic_trigger_parse("CH1=f", &c.trigger));
+    CHECK_OK(trigger_capture(dev, &c, &data, &n, &st));
+    CHECK(st.triggered && st.trigger_sample == 512);
+    uint64_t first = st.trigger_sample - st.trigger_offset, bad_p = 0, high_t = 0, bad_t = 0;
+    for (uint64_t i = 0; i < n; i++) {
+        uint16_t v = (uint16_t)(data[2*i] | data[2*i + 1] << 8);
+        uint64_t cyc = first + i; /* 100MS/s: one sample per cycle. */
+        int exp_p = cyc >= SLOGIC_OUT_PERIODIC_LATENCY && ((cyc - SLOGIC_OUT_PERIODIC_LATENCY) % 10) < 3;
+        bad_p += ((v >> 15) & 1) != !exp_p;
+        int exp_t = cyc >= 512 + SLOGIC_OUT_TRIGGER_LATENCY + 20 && cyc < 512 + SLOGIC_OUT_TRIGGER_LATENCY + 25;
+        bad_t  += ((v >> 14) & 1) != exp_t;
+        high_t += (v >> 14) & 1;
+    }
+    CHECK(bad_p == 0);
+    CHECK(bad_t == 0 && high_t == 5);
+    free(data);
+
+    /* All off: tristate. */
+    CHECK_OK(slogic_outputs_off(dev));
+    for (unsigned i = 0; i < 4; i++) {
+        CHECK_OK(slogic_output_get(dev, i, &o));
+        CHECK(!o.enable);
+    }
+    slogic_close(dev);
+
+    /* Gateware without outputs (sim default has the AUX IOs only). */
+    dev = open_sim("sim:fast");
+    CHECK_OK(slogic_get_info(dev, &info));
+    CHECK(slogic_output_count(&info) == 2);
+    CHECK(slogic_output_set(dev, 2, &g) == SLOGIC_ERR_ARG);
+    slogic_close(dev);
+}
+
 int main(void)
 {
     test_info();
@@ -490,6 +572,7 @@ int main(void)
     test_unpack();
     test_flash();
     test_trigger();
+    test_outputs();
     printf("libslogic16u3 tests: %d checks, %d failure(s)\n", checks, failures);
     return failures ? 1 : 0;
 }

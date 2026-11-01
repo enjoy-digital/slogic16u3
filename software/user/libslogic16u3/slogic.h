@@ -64,6 +64,8 @@ struct slogic_info {
     unsigned ratio;            /* Samples per sample clock cycle (8). */
     uint64_t base_rate;        /* Base samplerate (Hz): samplerates are base_rate/divider. */
     unsigned fifo_words;       /* Capture FIFO (64-bit words). */
+    unsigned naux;             /* AUX IOs (outputs 0..naux-1, gateware >= 0.3). */
+    uint16_t output_channels;  /* Output channels (mask, outputs naux.. in ascending order). */
     char     ident[256];       /* SoC identifier (with the build date). */
     char     transport[16];    /* "usb", "sim". */
     char     serial[64];       /* USB serial number. */
@@ -166,6 +168,49 @@ void slogic_unpack(unsigned channels, const uint8_t *data, uint64_t first, uint6
  * 10-bit Gray counter at 100MHz. */
 #define SLOGIC_GENERATOR_TEXT "SLogic16U3 LiteX pattern generator\r\n"
 uint16_t slogic_generator_sample(uint64_t t);
+
+/* Outputs (gateware 0.3) */
+/*-------------------------*/
+
+/* Tristate outputs (0: tristate until enabled): AUX0/AUX1 (JST SH connector UART pins, 3.3V), then the
+ * output channels of the build (--outputs: ~1.2-1.5V at the connector through the input dividers). The
+ * sources are evaluated on the sample clock (100MHz: 10ns), with fixed latencies (doc/GATEWARE.md). */
+#define SLOGIC_OUT_GPIO       0 /* Level (struct slogic_output.level). */
+#define SLOGIC_OUT_TRIGGER    1 /* Pulse (width cycles) delay cycles after the hardware trigger. */
+#define SLOGIC_OUT_ARMED      2 /* High while waiting for the trigger. */
+#define SLOGIC_OUT_CAPTURE    3 /* High while capturing. */
+#define SLOGIC_OUT_PERIODIC   4 /* High `high` cycles every `period` cycles (restarted high on capture start). */
+#define SLOGIC_OUT_GENERATOR  8 /* + k: pattern generator channel k (0-7, cycle rate). */
+
+/* Gateware latencies (sample clock cycles, pads excluded, test/test_output.py): trigger sample cycle ->
+ * trigger pulse (delay 0), generator cycle -> output. */
+#define SLOGIC_OUT_TRIGGER_LATENCY   8
+#define SLOGIC_OUT_GENERATOR_LATENCY 1
+#define SLOGIC_OUT_PERIODIC_LATENCY  3 /* Capture start (sample 0 cycle) -> first periodic high cycle. */
+
+struct slogic_output {
+    int      enable;           /* Drive the pad (0: tristate). */
+    unsigned source;           /* SLOGIC_OUT_*. */
+    int      invert;
+    int      level;            /* SLOGIC_OUT_GPIO level. */
+};
+
+unsigned slogic_output_count(const struct slogic_info *info);
+/* Output name ("AUX0", "CH15") / index from a name (< 0: not an output), channel (< 0: AUX IO). */
+int slogic_output_name(const struct slogic_info *info, unsigned out, char *name, size_t size);
+int slogic_output_find(const struct slogic_info *info, const char *name);
+int slogic_output_channel(const struct slogic_info *info, unsigned out);
+/* Source from/to a name: gpio, trigger, armed, capture, periodic, gen0-gen7. */
+int slogic_output_source_parse(const char *s, unsigned *source);
+const char *slogic_output_source_name(unsigned source, char *buf, size_t size);
+
+int slogic_output_set(struct slogic_dev *dev, unsigned out, const struct slogic_output *o);
+int slogic_output_get(struct slogic_dev *dev, unsigned out, struct slogic_output *o);
+/* Shared timings (sample clock cycles, write-only in the gateware): trigger pulse width (<= 255) and
+ * delay (< 2^24), periodic period (1 - 2^24) and high time (<= period). */
+int slogic_output_timing(struct slogic_dev *dev, uint32_t width, uint32_t delay, uint32_t period, uint32_t high);
+int slogic_output_levels(struct slogic_dev *dev, uint32_t *levels); /* Pad levels (bit n: output n). */
+int slogic_outputs_off(struct slogic_dev *dev);                       /* All tristate. */
 
 /* Flash (configuration SPI Flash, remote update) */
 /*-----------------------------------------------*/

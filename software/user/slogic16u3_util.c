@@ -336,6 +336,145 @@ static int cmd_check(uint64_t samples, const char *which)
     return failures ? 1 : 0;
 }
 
+/* Outputs */
+/*---------*/
+
+static int cmd_out(int argc, char **argv)
+{
+    struct slogic_dev *dev = open_dev();
+    struct slogic_info info;
+    char name[16], src[16];
+    int r = 0;
+
+    slogic_get_info(dev, &info);
+    unsigned n = slogic_output_count(&info);
+    if (!n) {
+        fprintf(stderr, "out: no outputs on this gateware (0.3 or later)\n");
+        slogic_close(dev);
+        return 1;
+    }
+    if (argc >= 5 && !strcmp(argv[0], "timing")) {
+        r = slogic_output_timing(dev, (uint32_t)strtoul(argv[1], NULL, 0), (uint32_t)strtoul(argv[2], NULL, 0),
+                                 (uint32_t)strtoul(argv[3], NULL, 0), (uint32_t)strtoul(argv[4], NULL, 0));
+    } else if (argc >= 2 && !strcmp(argv[0], "all") && !strcmp(argv[1], "off")) {
+        r = slogic_outputs_off(dev);
+    } else if (argc >= 2) {
+        int out = slogic_output_find(&info, argv[0]);
+        struct slogic_output o = { 0 };
+        if (out < 0) {
+            fprintf(stderr, "out: unknown output %s\n", argv[0]);
+            r = 1;
+        } else if (!strcmp(argv[1], "off")) {
+            slogic_output_get(dev, (unsigned)out, &o);
+            o.enable = 0;
+            r = slogic_output_set(dev, (unsigned)out, &o);
+        } else if (slogic_output_source_parse(argv[1], &o.source)) {
+            fprintf(stderr, "out: unknown source %s (gpio, trigger, armed, capture, periodic, gen0-gen7)\n", argv[1]);
+            r = 1;
+        } else {
+            o.enable = 1;
+            for (int i = 2; i < argc; i++) {
+                if (!strcmp(argv[i], "inv"))
+                    o.invert = 1;
+                else
+                    o.level = atoi(argv[i]);
+            }
+            r = slogic_output_set(dev, (unsigned)out, &o);
+        }
+    } else if (argc != 0) {
+        fprintf(stderr, "out [<output> off|<source> [level] [inv] | all off | timing <width> <delay> <period> <high>]\n");
+        r = 1;
+    }
+    if (!r) {
+        uint32_t levels = 0;
+        slogic_output_levels(dev, &levels);
+        for (unsigned i = 0; i < n; i++) {
+            struct slogic_output o;
+            slogic_output_get(dev, i, &o);
+            slogic_output_name(&info, i, name, sizeof(name));
+            printf("%-5s %-8s %-9s%s%s pad %u\n", name, o.enable ? "driven" : "tristate",
+                   slogic_output_source_name(o.source, src, sizeof(src)), o.invert ? " inv" : "",
+                   o.source == SLOGIC_OUT_GPIO ? (o.level ? " 1" : " 0") : "", (levels >> i) & 1);
+        }
+        if (argc >= 5 && !strcmp(argv[0], "timing"))
+            printf("timing (sample clock cycles, %.0fns): trigger pulse width %s delay %s, periodic period %s high %s\n",
+                   1e9*info.ratio/info.base_rate, argv[1], argv[2], argv[3], argv[4]);
+    } else if (r < 0) {
+        fprintf(stderr, "out: %s\n", slogic_strerror(r));
+    }
+    slogic_close(dev);
+    return r ? 1 : 0;
+}
+
+/* Loopback self-test: pattern generator channels on an output, wired to an input channel: captured
+ * input checked against the generator model (latency searched), real input path validated. */
+static int cmd_loopback(const char *out_name, const char *ch_name)
+{
+    static const unsigned gens[] = { 0, 2 }; /* UART (1Mbaud), SPI SCK (12.5MHz). */
+    struct slogic_dev *dev = open_dev();
+    struct slogic_info info;
+    int out, ch = -1, failures = 0;
+
+    slogic_get_info(dev, &info);
+    out = slogic_output_find(&info, out_name);
+    if (ch_name && (ch_name[0] == 'C' || ch_name[0] == 'c'))
+        ch = atoi(ch_name + 2);
+    if (out < 0 || ch < 0 || ch > 15) {
+        fprintf(stderr, "loopback <output> <channel> (ex: loopback AUX0 CH0): unknown output/channel\n");
+        slogic_close(dev);
+        return 1;
+    }
+    unsigned channels = ch < 4 ? 4 : ch < 8 ? 8 : 16;
+    uint64_t n = 200000, rate = info.base_rate/info.ratio; /* One sample per sample clock cycle. */
+    for (unsigned g = 0; g < sizeof(gens)/sizeof(gens[0]); g++) {
+        struct slogic_output o = { .enable = 1, .source = SLOGIC_OUT_GENERATOR + gens[g] };
+        struct slogic_config c = { .channels = channels, .samplerate = rate, .limit = n };
+        uint8_t *s = malloc(slogic_packed_bytes(channels, n) + 16), *u = malloc(2*n);
+        const uint8_t *data;
+        size_t size, total = 0;
+        int r;
+        slogic_output_set(dev, (unsigned)out, &o);
+        if ((r = slogic_capture_start(dev, &c)) == SLOGIC_OK)
+            while ((r = slogic_capture_read(dev, &data, &size, 2000)) == SLOGIC_OK) {
+                memcpy(s + total, data, size);
+                total += size;
+            }
+        slogic_capture_stop(dev, NULL);
+        uint64_t got = total*8/channels > n ? n : total*8/channels, best = got + 1, edges = 0;
+        int best_d = -1;
+        slogic_unpack(channels, s, 0, got, u);
+        unsigned unit = slogic_unitsize(channels);
+        for (int d = 0; d < 32; d++) {
+            uint64_t bad = 0;
+            for (uint64_t i = 0; i < got; i++) {
+                uint32_t v = unit == 2 ? (uint32_t)(u[2*i] | u[2*i + 1] << 8) : u[i];
+                uint64_t gc = i >= (uint64_t)d ? i - d : 0;
+                bad += ((v >> ch) & 1) != ((slogic_generator_sample(8*gc) >> gens[g]) & 1u);
+            }
+            if (bad < best) {
+                best   = bad;
+                best_d = d;
+            }
+        }
+        for (uint64_t i = 1; i < got; i++) {
+            uint32_t a = unit == 2 ? (uint32_t)(u[2*i] | u[2*i + 1] << 8) : u[i];
+            uint32_t b = unit == 2 ? (uint32_t)(u[2*i - 2] | u[2*i - 1] << 8) : u[i - 1];
+            edges += ((a ^ b) >> ch) & 1;
+        }
+        int ok = r == SLOGIC_ERR_END && got == n && best == 0 && edges > 0;
+        printf("loopback %s -> CH%d gen%u: %s (%llu samples, %llu edges, %llu errors, latency %d cycles)\n",
+               out_name, ch, gens[g], ok ? "OK" : "FAIL", (unsigned long long)got, (unsigned long long)edges,
+               (unsigned long long)(best > got ? got : best), best_d);
+        failures += !ok;
+        free(s);
+        free(u);
+    }
+    struct slogic_output off = { 0 };
+    slogic_output_set(dev, (unsigned)out, &off);
+    slogic_close(dev);
+    return failures ? 1 : 0;
+}
+
 /* Throughput: continuous capture, highest samplerate without overflow. */
 static int cmd_bench(unsigned channels, uint64_t samplerate, double duration)
 {
@@ -545,6 +684,11 @@ static void help(void)
            "  check [samples] [counter|generator|trigger|all]\n"
            "                       Self-test: test pattern captures, all modes/samplerates.\n"
            "  bench [ch] [MHz] [s] Throughput (continuous capture).\n"
+           "  out                  Outputs (AUX0/AUX1, output channels): state, pad levels.\n"
+           "  out <o> <source> [level] [inv]  Drive an output: gpio, trigger, armed, capture, periodic, gen0-gen7.\n"
+           "  out <o> off | out all off       Back to tristate.\n"
+           "  out timing <width> <delay> <period> <high>  Timings (sample clock cycles).\n"
+           "  loopback <o> <ch>    Output wired to an input channel: generator checked (input path self-test).\n"
            "  flash probe          Flash pads mapping probe, JEDEC ID.\n"
            "  flash read <f> <a> <n>  Read Flash to a file.\n"
            "  flash update <img>   Update the application (0x000000, the DFU loader is never written).\n"
@@ -579,6 +723,8 @@ int main(int argc, char **argv)
     if (!strcmp(argv[0], "bench"))
         return cmd_bench(argc > 1 ? atoi(argv[1]) : 16, (uint64_t)((argc > 2 ? atof(argv[2]) : 100)*1e6),
                          argc > 3 ? atof(argv[3]) : 5.0);
+    if (!strcmp(argv[0], "out"))    return cmd_out(argc - 1, argv + 1);
+    if (!strcmp(argv[0], "loopback") && argc >= 3) return cmd_loopback(argv[1], argv[2]);
     if (!strcmp(argv[0], "flash"))  return cmd_flash(argc - 1, argv + 1);
     if (!strcmp(argv[0], "dfu"))    return cmd_dfu(argc - 1, argv + 1);
     help();
