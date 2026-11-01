@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "slogic.h"
@@ -116,6 +117,13 @@ static int slogic_read_info(struct slogic_dev *dev)
     info->base_rate  = regs[3];
     if (info->magic != SLOGIC_MAGIC || (info->version >> 16) != 0 || !info->ratio)
         return SLOGIC_ERR_DEVICE;
+    if ((info->version & 0xffff) >= 3) {
+        uint32_t oc;
+        if ((r = slogic_read32(dev, SLOGIC_ANALYZER_OUT_CONFIG, &oc)))
+            return r;
+        info->naux            = SLOGIC_OUT_CONFIG_NAUX(oc);
+        info->output_channels = (uint16_t)SLOGIC_OUT_CONFIG_CHANNELS(oc);
+    }
 
     /* Identifier: one character per CSR word, NUL terminated. */
     if ((r = slogic_read_burst(dev, SLOGIC_IDENTIFIER_BASE, ident, 64)))
@@ -517,6 +525,153 @@ int slogic_capture_stop(struct slogic_dev *dev, struct slogic_status *st)
     if (st)
         return slogic_capture_status(dev, st);
     return SLOGIC_OK;
+}
+
+/* Outputs */
+/*---------*/
+
+static unsigned popcount16(uint16_t v)
+{
+    unsigned n = 0;
+    for (; v; v &= v - 1)
+        n++;
+    return n;
+}
+
+unsigned slogic_output_count(const struct slogic_info *info)
+{
+    if (!info || (info->version & 0xffff) < 3)
+        return 0;
+    return info->naux + popcount16(info->output_channels);
+}
+
+int slogic_output_channel(const struct slogic_info *info, unsigned out)
+{
+    if (!info || out >= slogic_output_count(info) || out < info->naux)
+        return -1;
+    unsigned k = out - info->naux;
+    for (int c = 0; c < 16; c++)
+        if ((info->output_channels >> c) & 1) {
+            if (!k)
+                return c;
+            k--;
+        }
+    return -1;
+}
+
+int slogic_output_name(const struct slogic_info *info, unsigned out, char *name, size_t size)
+{
+    if (!info || !name || out >= slogic_output_count(info))
+        return SLOGIC_ERR_ARG;
+    if (out < info->naux)
+        snprintf(name, size, "AUX%u", out);
+    else
+        snprintf(name, size, "CH%d", slogic_output_channel(info, out));
+    return SLOGIC_OK;
+}
+
+int slogic_output_find(const struct slogic_info *info, const char *name)
+{
+    char n[16];
+    for (unsigned i = 0; name && i < slogic_output_count(info); i++)
+        if (!slogic_output_name(info, i, n, sizeof(n)) && !strcasecmp(n, name))
+            return (int)i;
+    return -1;
+}
+
+int slogic_output_source_parse(const char *s, unsigned *source)
+{
+    static const char *names[] = { "gpio", "trigger", "armed", "capture", "periodic" };
+    if (!s || !source)
+        return SLOGIC_ERR_ARG;
+    for (unsigned i = 0; i < sizeof(names)/sizeof(names[0]); i++)
+        if (!strcasecmp(s, names[i])) {
+            *source = i;
+            return SLOGIC_OK;
+        }
+    if (!strncasecmp(s, "gen", 3) && s[3] >= '0' && s[3] <= '7' && !s[4]) {
+        *source = SLOGIC_OUT_GENERATOR + (unsigned)(s[3] - '0');
+        return SLOGIC_OK;
+    }
+    return SLOGIC_ERR_ARG;
+}
+
+const char *slogic_output_source_name(unsigned source, char *buf, size_t size)
+{
+    static const char *names[] = { "gpio", "trigger", "armed", "capture", "periodic" };
+    if (source < sizeof(names)/sizeof(names[0]))
+        snprintf(buf, size, "%s", names[source]);
+    else if (source >= SLOGIC_OUT_GENERATOR && source < SLOGIC_OUT_GENERATOR + 8)
+        snprintf(buf, size, "gen%u", source - SLOGIC_OUT_GENERATOR);
+    else
+        snprintf(buf, size, "?");
+    return buf;
+}
+
+int slogic_output_get(struct slogic_dev *dev, unsigned out, struct slogic_output *o)
+{
+    uint32_t ctrl, sel;
+    int r;
+    if (!dev || !o || out >= slogic_output_count(&dev->info))
+        return SLOGIC_ERR_ARG;
+    if ((r = slogic_read32(dev, SLOGIC_ANALYZER_OUT_CTRL, &ctrl)) || (r = slogic_read32(dev, SLOGIC_ANALYZER_OUT_SEL, &sel)))
+        return r;
+    o->enable = (ctrl >> out) & 1;
+    o->invert = (ctrl >> (8 + out)) & 1;
+    o->level  = (ctrl >> (16 + out)) & 1;
+    o->source = (sel >> (4*out)) & 0xf;
+    return SLOGIC_OK;
+}
+
+int slogic_output_set(struct slogic_dev *dev, unsigned out, const struct slogic_output *o)
+{
+    uint32_t ctrl, sel;
+    int r;
+    if (!dev || !o || out >= slogic_output_count(&dev->info) || o->source > 0xf)
+        return SLOGIC_ERR_ARG;
+    if ((r = slogic_read32(dev, SLOGIC_ANALYZER_OUT_CTRL, &ctrl)) || (r = slogic_read32(dev, SLOGIC_ANALYZER_OUT_SEL, &sel)))
+        return r;
+    /* Source/levels first, then the output enable (no glitch from a previous source). */
+    sel  = (sel & ~(0xfu << (4*out))) | (o->source << (4*out));
+    ctrl = (ctrl & ~((1u << (8 + out)) | (1u << (16 + out)))) |
+           ((uint32_t)!!o->invert << (8 + out)) | ((uint32_t)!!o->level << (16 + out));
+    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_OUT_SEL, sel)) ||
+        (r = slogic_write32(dev, SLOGIC_ANALYZER_OUT_CTRL, ctrl & ~(1u << out))))
+        return r;
+    if (o->enable)
+        return slogic_write32(dev, SLOGIC_ANALYZER_OUT_CTRL, ctrl | (1u << out));
+    return SLOGIC_OK;
+}
+
+int slogic_output_timing(struct slogic_dev *dev, uint32_t width, uint32_t delay, uint32_t period, uint32_t high)
+{
+    int r;
+    if (!dev || slogic_output_count(&dev->info) == 0 || width > 0xff || delay > 0xffffff ||
+        !period || period > 0x1000000 || high > period)
+        return SLOGIC_ERR_ARG;
+    if ((r = slogic_write32(dev, SLOGIC_ANALYZER_OUT_PULSE, delay | width << 24)) ||
+        (r = slogic_write32(dev, SLOGIC_ANALYZER_OUT_HIGH,  high)) ||
+        (r = slogic_write32(dev, SLOGIC_ANALYZER_OUT_LOW,   period - high)))
+        return r;
+    return SLOGIC_OK;
+}
+
+int slogic_output_levels(struct slogic_dev *dev, uint32_t *levels)
+{
+    if (!dev || !levels || slogic_output_count(&dev->info) == 0)
+        return SLOGIC_ERR_ARG;
+    return slogic_read32(dev, SLOGIC_ANALYZER_OUT_LEVELS, levels);
+}
+
+int slogic_outputs_off(struct slogic_dev *dev)
+{
+    uint32_t ctrl;
+    int r;
+    if (!dev || slogic_output_count(&dev->info) == 0)
+        return SLOGIC_ERR_ARG;
+    if ((r = slogic_read32(dev, SLOGIC_ANALYZER_OUT_CTRL, &ctrl)))
+        return r;
+    return slogic_write32(dev, SLOGIC_ANALYZER_OUT_CTRL, ctrl & ~0xffu);
 }
 
 /* Data */

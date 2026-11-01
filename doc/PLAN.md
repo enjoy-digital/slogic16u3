@@ -49,6 +49,7 @@ Host stack (layered, C first):
 | 9  | Hardware bring-up        | USB3 link, pattern capture, inputs, sample clock accuracy, rates, throughput, update on hardware.     | In progress       |
 | 10 | Docs                     | README, GATEWARE/SOFTWARE/UPDATE/HARDWARE, promo video and stills.                                   | Done              |
 | 11 | Hardware trigger (#1)    | Edge/level/pattern trigger, pre-trigger window in the capture FIFO, libslogic16u3/tools/sigrok/bridge. | Done (sim)        |
+| 12 | Outputs                  | Tristate AUX IOs + output channels (build option): trigger out, sync, periodic, GPIO, loopback test.   | Done (sim)        |
 
 ## Timing Closure (GW5AT-15B, Gowin 1.9.12.04)
 
@@ -62,8 +63,8 @@ Host stack (layered, C first):
 Full design: 13.3K/15.1K logic (88%), 95% CLS, 26/35 BSRAM, 2/2 PLLs. Gowin 1.9.12: timings met with 4 of the 5
 place algorithms (0: unrouted), place_option 2 with the best margins (default); 1.9.10 only met them with
 place_option 2. Gowin PnR has no seed: `scripts/build_best.py` builds the place algorithms in parallel and keeps
-the one with the best margins (as slogic16u3-trace). Next steps for robustness if needed: limit stage
-pipelining (sample clock), MaxBurst 4.
+the one with the best margins (as slogic16u3-trace). Gateware 0.3: route_option 2 by default, all the place
+algorithms meet the timings (doc/GATEWARE.md, Resources/Timings).
 
 ## Hardware Bring-up Steps
 

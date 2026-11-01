@@ -52,6 +52,13 @@
 #define SLOGIC_ANALYZER_TRIGGER_EDGE (SLOGIC_ANALYZER_BASE + 0x38) /* rising[15:0], falling[31:16]. */
 #define SLOGIC_ANALYZER_PRETRIGGER   (SLOGIC_ANALYZER_BASE + 0x3c) /* 64-bit words. */
 #define SLOGIC_ANALYZER_TRIGGER_COUNT (SLOGIC_ANALYZER_BASE + 0x40) /* 64-bit. */
+#define SLOGIC_ANALYZER_OUT_CONFIG   (SLOGIC_ANALYZER_BASE + 0x48) /* channels[15:0], naux[19:16]. */
+#define SLOGIC_ANALYZER_OUT_CTRL     (SLOGIC_ANALYZER_BASE + 0x4c) /* oe[7:0], invert[15:8], gpio[23:16]. */
+#define SLOGIC_ANALYZER_OUT_SEL      (SLOGIC_ANALYZER_BASE + 0x50) /* 4 bits per output. */
+#define SLOGIC_ANALYZER_OUT_PULSE    (SLOGIC_ANALYZER_BASE + 0x54) /* delay[23:0], width[31:24] (write-only). */
+#define SLOGIC_ANALYZER_OUT_HIGH     (SLOGIC_ANALYZER_BASE + 0x58) /* Periodic high cycles (write-only). */
+#define SLOGIC_ANALYZER_OUT_LOW      (SLOGIC_ANALYZER_BASE + 0x5c) /* Periodic low cycles (write-only). */
+#define SLOGIC_ANALYZER_OUT_LEVELS   (SLOGIC_ANALYZER_BASE + 0x60)
 
 #define SLOGIC_MAGIC                 0x534c4f47 /* "SLOG". */
 
@@ -79,6 +86,10 @@
 
 #define SLOGIC_TRIGGER_ENABLE        (1 << 0)
 #define SLOGIC_PRETRIGGER_MARGIN     64 /* FIFO words (gateware/analyzer.py). */
+
+#define SLOGIC_OUT_CONFIG_CHANNELS(c) ((c) & 0xffff)
+#define SLOGIC_OUT_CONFIG_NAUX(c)    (((c) >> 16) & 0xf)
+#define SLOGIC_OUT_MAX               8 /* gateware/output.py OUTPUT_MAX. */
 
 /* Flash */
 /*-------*/

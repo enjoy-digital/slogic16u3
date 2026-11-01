@@ -92,6 +92,8 @@ class Capture(LiteXModule):
         self.triggered     = Signal()      # o: Trigger matched (with trigger_enable).
         self.trigger_count = Signal(cbits) # o: Trigger sample index (valid with triggered).
         self.gen           = Signal()      # o: Toggled on each start.
+        self.armed         = Signal()      # o: Waiting for the trigger.
+        self.trigger_pulse = Signal()      # o: Trigger matched (pulse, registered: trigger cycle + 1).
 
         # # #
 
@@ -100,9 +102,9 @@ class Capture(LiteXModule):
         start    = Signal()
         self.sync += enable_d.eq(self.enable)
         self.comb += start.eq(self.enable & ~enable_d)
-        divider = Signal(32)
-        divsat  = Signal(4) # min(divider, ratio).
-        div_big = Signal()  # divider >= ratio.
+        divider = Signal(32, reset_less=True)
+        divsat  = Signal(4,  reset_less=True) # min(divider, ratio).
+        div_big = Signal(    reset_less=True) # divider >= ratio.
         self.sync += [      # Quasi-static, registered.
             divider.eq(Mux(self.divider == 0, 1, self.divider)),
             div_big.eq(divider >= ratio),
@@ -111,9 +113,9 @@ class Capture(LiteXModule):
 
         # Source (inputs/test pattern) -------------------------------------------------------------
         # The word of the start cycle is the first captured one (s0_start), counter restarted at 0.
-        counter   = Signal(16)
+        counter   = Signal(16, reset_less=True)
         counter_c = Signal(16)
-        s0        = Signal(ratio*nchannels)
+        s0        = Signal(ratio*nchannels, reset_less=True)
         s0_start  = Signal()
         s0_run    = Signal()
         self.comb += counter_c.eq(Mux(start, 0, counter))
@@ -133,9 +135,9 @@ class Capture(LiteXModule):
         # skip: samples to skip before the next kept one, from the first sample of the current word.
         # Single cycle recurrence (only skip -> skip_n): small table for divider < ratio (skip <
         # divider), one adder for divider >= ratio (divm: divider - ratio, quasi-static).
-        divm     = Signal(32)
+        divm     = Signal(32, reset_less=True)
         self.sync += divm.eq(divider - ratio)
-        skip     = Signal(32)
+        skip     = Signal(32, reset_less=True)
         skip_cur = Signal(32)
         skip_n   = Signal(32)
         small_n  = Signal(3)
@@ -160,27 +162,31 @@ class Capture(LiteXModule):
 
         # Positions of the kept samples (registered skip, data delayed one cycle): skip + j*divsat
         # (j < ratio, kept while < ratio).
-        s1       = Signal(ratio*nchannels)
+        s1       = Signal(ratio*nchannels, reset_less=True)
         s1_run   = Signal()
-        skip1_lo = Signal(4)
+        skip1_lo = Signal(4, reset_less=True)
         self.sync += [
             s1.eq(s0),
             s1_run.eq(s0_run),
             skip1_lo.eq(Mux(skip_cur[3:] != 0, ratio, skip_cur[:3])),
         ]
         pos   = [Signal(7) for _ in range(ratio)]
-        valid = Signal(ratio)
-        k     = Signal(4)
+        # Kept samples in the cycle: k = ceil((ratio - skip)/divsat) (positions < ratio), from a table of
+        # the registered skip and the quasi-static divsat (timings: no adders/compares/popcount).
+        k       = Signal(4)
+        k_cases = {"default": k.eq(0)}
+        for sk in range(ratio):
+            for ds in range(1, ratio + 1):
+                k_cases[(ds << 4) | sk] = k.eq(-(-(ratio - sk)//ds))
         self.comb += [
             [pos[j].eq(skip1_lo + j*divsat) for j in range(ratio)],
-            [valid[j].eq(pos[j] < ratio) for j in range(ratio)],
-            k.eq(Reduce("ADD", [valid[j] for j in range(ratio)])),
+            Case(Cat(skip1_lo, divsat), k_cases),
         ]
 
         # Decimated samples (compacted: d1[0:d1_k] valid), registered, lanes sized for the valid
         # configurations.
         lane_bits = [16, 16, 8, 8, 4, 4, 4, 4]
-        d1        = [Signal(lane_bits[j]) for j in range(ratio)]
+        d1        = [Signal(lane_bits[j], reset_less=True) for j in range(ratio)]
         d1_k      = Signal(4)
         d1_run    = Signal()
         for j in range(ratio):
@@ -194,7 +200,7 @@ class Capture(LiteXModule):
         # Trigger ----------------------------------------------------------------------------------
         # Conditions masked to the channel mode (registered), match registered: aligned with d1b (d1
         # delayed one cycle, the Limit stage input).
-        chmask = Signal(nchannels)
+        chmask = Signal(nchannels, reset_less=True)
         self.sync += Case(self.mode, {
             CAPTURE_MODE_4CH  : chmask.eq(0x000f),
             CAPTURE_MODE_8CH  : chmask.eq(0x00ff),
@@ -211,7 +217,7 @@ class Capture(LiteXModule):
             trigger.k.eq(d1_k),
             trigger.run.eq(d1_run),
         ]
-        d1b     = [Signal(lane_bits[j]) for j in range(ratio)]
+        d1b     = [Signal(lane_bits[j], reset_less=True) for j in range(ratio)]
         d1b_k   = Signal(4)
         d1b_run = Signal()
         self.sync += [
@@ -222,8 +228,8 @@ class Capture(LiteXModule):
         armed   = Signal() # Waiting for the trigger.
         hit     = Signal()
         hit_pos = Signal(3)
-        t_count = Signal(cbits)
-        t_pos   = Signal(3)
+        t_count = Signal(cbits, reset_less=True)
+        t_pos   = Signal(3, reset_less=True)
         t_stage = Signal()
         self.comb += [
             hit.eq(armed & (trigger.match != 0)),
@@ -232,6 +238,7 @@ class Capture(LiteXModule):
             [If(trigger.match[j], hit_pos.eq(j)) for j in reversed(range(ratio))],
         ]
         # trigger_count/triggered updated on the same edge (consistent snapshot for the CDC).
+        self.comb += self.armed.eq(armed)
         self.sync += [
             self.trigger_count.eq(t_count + t_pos),
             self.triggered.eq(t_stage),
@@ -240,7 +247,7 @@ class Capture(LiteXModule):
         # Limit ------------------------------------------------------------------------------------
         # remaining: samples left (down counter), rem_small: remaining < 16 (registered). While armed,
         # remaining is reloaded with the limit (counted from the trigger cycle).
-        remaining = Signal(cbits)
+        remaining = Signal(cbits, reset_less=True)
         rem_small = Signal()
         rem_hi_0  = Signal() # remaining < 32 (from the registers only: off the d2_k path).
         rem_low_n = Signal(6)
@@ -249,7 +256,7 @@ class Capture(LiteXModule):
         limited   = Signal()
         self.comb += [
             rem_hi_0.eq(remaining[5:] == 0),
-            rem_low_n.eq(remaining[:5] - d2_k),
+            rem_low_n.eq(remaining[:5] - d1b_k), # d1b_k (not d2_k): limited ends the capture anyway.
             If(limit_en & rem_small & (remaining[:5] <= d1b_k),
                 d2_k.eq(remaining[:4]),
                 limited.eq(1),
@@ -260,8 +267,8 @@ class Capture(LiteXModule):
 
         # Width (registered) -----------------------------------------------------------------------
         # Chunk: d2_k samples of w bits, contiguous from the LSBs.
-        chunk      = Signal(32)
-        chunk_bits = Signal(6)
+        chunk      = Signal(32, reset_less=True)
+        chunk_bits = Signal(6, reset_less=True)
         too_wide   = Signal()
         d3_run     = Signal()
         d3_limited = Signal()
@@ -297,7 +304,7 @@ class Capture(LiteXModule):
         ]
 
         # Packer (32-bit) --------------------------------------------------------------------------
-        buf     = Signal(64)
+        buf     = Signal(64, reset_less=True)
         level   = Signal(6) # Bits in buf (< 32 between cycles, multiple of 4).
         buf_n   = Signal(64)
         level_n = Signal(7)
@@ -346,13 +353,15 @@ class Capture(LiteXModule):
             self.running.eq(1),
             # Limit stage (d1b).
             If(d1b_run & ~stop_req,
-                NextValue(self.count, self.count + d2_k),
+                # Both sums from registers, limited selects (timings: off the d2_k multiplexer).
+                NextValue(self.count, Mux(limited, self.count + remaining[:4], self.count + d1b_k)),
                 If(armed & ~hit,
                     NextValue(remaining, self.limit),
                     NextValue(rem_small, self.limit < 16),
                 ).Else(
-                    NextValue(remaining, remaining - d2_k),
-                    # (remaining - d2_k) < 16 without the 48-bit result (d2_k <= ratio, timings).
+                    # d1b_k (not d2_k): once limited, remaining is not used (capture ended).
+                    NextValue(remaining, remaining - d1b_k),
+                    # (remaining - d1b_k) < 16 without the 48-bit result (d1b_k <= ratio, timings).
                     NextValue(rem_small, rem_hi_0 & (rem_low_n < 16)),
                 ),
                 If(limited, NextValue(stop_req, 1)),
@@ -400,3 +409,6 @@ class Capture(LiteXModule):
                 NextState("IDLE")
             )
         )
+
+        # Trigger Pulse (Output core: trigger out) -------------------------------------------------
+        self.sync += self.trigger_pulse.eq(hit & d1b_run & ~stop_req)

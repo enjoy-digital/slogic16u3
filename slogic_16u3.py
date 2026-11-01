@@ -21,6 +21,7 @@ import re
 import argparse
 
 from migen import *
+from migen.fhdl.specials import Tristate
 
 from litex.gen import *
 
@@ -65,7 +66,7 @@ class SLogicBaseSoC(SoCMini):
 
     def add_slogic(self, usb3_phy, samples, sample_cd="sample", base_rate=800e6, mspi_pads=None,
         usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=1024,
-        usb3_max_burst=USB3_MAX_BURST, with_analyzer=True, with_flash=True):
+        usb3_max_burst=USB3_MAX_BURST, with_analyzer=True, with_flash=True, naux=0, output_channels=[]):
         # USB3 Device (EP0 Wishbone bridge, Bulk IN) -----------------------------------------------
         self.usb3 = usb3 = USB3Device(usb3_phy, self.sys_clk_freq,
             data_width = 64,
@@ -79,7 +80,7 @@ class SLogicBaseSoC(SoCMini):
         if not with_analyzer:
             self.comb += usb3.sink.valid.eq(0)
         else:
-            self.add_analyzer(usb3, samples, sample_cd, base_rate, fifo_depth)
+            self.add_analyzer(usb3, samples, sample_cd, base_rate, fifo_depth, naux, output_channels)
 
         # Flash (remote update) --------------------------------------------------------------------
         if with_flash:
@@ -88,11 +89,13 @@ class SLogicBaseSoC(SoCMini):
             self.bus.add_slave(name="flash_buffer", slave=flash.bus,
                 region=SoCRegion(origin=FLASH_BUFFER_BASE, size=flash.buffer_size, cached=False))
 
-    def add_analyzer(self, usb3, samples, sample_cd, base_rate, fifo_depth):
+    def add_analyzer(self, usb3, samples, sample_cd, base_rate, fifo_depth, naux=0, output_channels=[]):
         self.analyzer = analyzer = Analyzer(nchannels=16, ratio=8, data_width=64,
-            base_rate  = base_rate,
-            fifo_depth = fifo_depth,
-            cd         = sample_cd)
+            base_rate       = base_rate,
+            fifo_depth      = fifo_depth,
+            cd              = sample_cd,
+            naux            = naux,
+            output_channels = output_channels)
         analyzer.add_csr()
         self.comb += [
             analyzer.samples.eq(samples),
@@ -106,8 +109,11 @@ class SLogicSoC(SLogicBaseSoC):
     def __init__(self, platform, sys_clk_freq=62.5e6, sample_clk_freq=100e6, sample_clk_source="serdes",
         usb_vid=USB3_VID, usb_pid=USB3_PID, usb_serial="0001", fifo_depth=2048, usb3_pll="QPLL0",
         usb3_max_burst=USB3_MAX_BURST, with_analyzer=True, with_flash=True, with_jtagbone=False,
-        with_usb3_debug=False, with_usb3_counters=False):
+        with_usb3_debug=False, with_usb3_counters=False, with_aux=True, outputs=[]):
         usb3_clk_freq = 125e6
+        outputs       = sorted(outputs)
+        assert len(outputs) <= 4
+        assert all(0 <= c < 16 for c in outputs)
 
         # SoCMini ----------------------------------------------------------------------------------
         SoCMini.__init__(self, platform, sys_clk_freq, ident="SLogic16U3 LiteX", ident_version=True)
@@ -174,11 +180,33 @@ class SLogicSoC(SLogicBaseSoC):
             self.add_jtagbone()
 
         # Sampler / SLogic (USB3 Device, Analyzer, Flash) ------------------------------------------
-        samples = Signal(8*16)
+        # Output channels (outputs): LVCMOS33 tristate IOs (IO types are fixed in the bitstream:
+        # LVCMOS15UD33 is input only), still captured (readback, LVCMOS33 threshold at the pins), see
+        # doc/HARDWARE.md (outputs through the input dividers: ~1.2-1.5V at the connector).
+        samples   = Signal(8*16)
+        out_pads  = [] # (pad, i, readback) of the outputs (AUX IOs, then output channels).
         if with_analyzer:
-            la_pads = platform.request("la")
-            self.sampler = sampler = GW5ASampler(la_pads.ch, nchannels=16, ratio=8)
+            if outputs:
+                pins = platform.constraint_manager.connector_manager.connector_table["LA"]
+                platform.add_extension([("la_ch", i, Pins(pins[i]),
+                    IOStandard("LVCMOS33" if i in outputs else "LVCMOS15UD33")) for i in range(16)])
+                ch_pads = [platform.request("la_ch", i) for i in range(16)]
+            else:
+                ch_pads = platform.request("la").ch
+            ch_in = [ch_pads[i] for i in range(16)]
+            for c in outputs:
+                ch_in[c] = Signal()
+            self.sampler = sampler = GW5ASampler(ch_in, nchannels=16, ratio=8)
             samples = sampler.samples
+            # Output channels readback from the captured samples (the IOBUF output only feeds the IDES8).
+            for c in outputs:
+                out_pads.append((ch_pads[c], ch_in[c], samples[c]))
+            # AUX IOs (JST SH connector UART pins: LVCMOS33, no divider).
+            if with_aux:
+                serial   = platform.request("serial")
+                aux_i    = [Signal(), Signal()]
+                aux_pads = [(serial.tx, aux_i[0], aux_i[0]), (serial.rx, aux_i[1], aux_i[1])]
+                out_pads = aux_pads + out_pads
         platform.add_extension(_mspi_io)
         self.add_slogic(usb3_phy, samples,
             sample_cd  = "sample",
@@ -190,7 +218,17 @@ class SLogicSoC(SLogicBaseSoC):
             fifo_depth     = fifo_depth,
             usb3_max_burst = usb3_max_burst,
             with_analyzer  = with_analyzer,
-            with_flash     = with_flash)
+            with_flash     = with_flash,
+            naux            = 2 if (with_analyzer and with_aux) else 0,
+            output_channels = outputs if with_analyzer else [])
+
+        # Outputs (tristate until enabled: out_oe) -------------------------------------------------
+        for n, (pad, i, readback) in enumerate(out_pads):
+            self.specials += Tristate(pad,
+                o  = self.analyzer.out_o[n],
+                oe = self.analyzer.out_oe[n],
+                i  = i)
+            self.comb += self.analyzer.out_i[n].eq(readback)
 
         # USB3 Device Core bring-up debug: Link Layer statistics, Data Packets rings.
         if with_usb3_debug:
@@ -276,9 +314,12 @@ def main():
     parser.add_argument("--usb3-pll",          default="QPLL0",         help="GTR12 lane PLL.", choices=["QPLL0", "QPLL1"])
     parser.add_argument("--device-version",    default="B",             help="GW5AT-15 device version (A: Gowin 1.9.10).", choices=["A", "B"])
     parser.add_argument("--place-option",      default=2, type=int,     help="Gowin place algorithm.", choices=[0, 1, 2, 3, 4])
-    parser.add_argument("--route-option",      default=1, type=int,     help="Gowin route algorithm.", choices=[0, 1, 2])
+    parser.add_argument("--route-option",      default=2, type=int,     help="Gowin route algorithm (2: all the place algorithms meet the timings).", choices=[0, 1, 2])
     parser.add_argument("--replicate-resources", default=0, type=int,   help="Gowin resources replication (timings vs logic).", choices=[0, 1])
+    parser.add_argument("--outputs",           default="",              help="Output channels (ex: CH14,CH15, max 4): tristate LVCMOS33 IOs (low swing through the input dividers, LVCMOS33 input threshold).")
+    parser.add_argument("--no-aux",            action="store_true",     help="Build without the AUX IOs (JST SH connector UART pins).")
     args = parser.parse_args()
+    outputs = [int(c.strip().upper().removeprefix("CH")) for c in args.outputs.split(",") if c.strip()]
 
     platform = sipeed_slogic16u3.Platform(device_version=args.device_version, toolchain="gowin")
     platform.toolchain.options["place_option"]        = args.place_option
@@ -302,6 +343,8 @@ def main():
         with_usb3_counters = args.with_usb3_counters,
         with_analyzer      = not args.no_analyzer,
         with_flash         = not args.no_flash,
+        with_aux           = not args.no_aux,
+        outputs            = outputs,
     )
     builder = Builder(soc, output_dir=args.output_dir, csr_csv=os.path.join(args.output_dir, "csr.csv"),
         csr_json=os.path.join(args.output_dir, "csr.json"))

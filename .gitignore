@@ -1,5 +1,7 @@
 *.a
 build/
+build_*/
+build_*.log
 *.d
 *.dump
 *.egg-info/

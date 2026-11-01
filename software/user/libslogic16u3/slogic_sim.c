@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
  * libslogic16u3: simulated device (software model of the gateware), for tests and development without
- * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast]".
+ * hardware: "sim[:rate=<bytes/s>][,pins=<clk><cs_n><mosi><miso>][,fast][,outputs=<mask>][,loop=<out>:<ch>]".
  *
  * - Registers: Analyzer (info, control, status, counters), Flash, identifier, USB3 PHY status.
  * - Capture stream: counter test pattern (sample i = i*divider, as the gateware), pattern generator
@@ -12,6 +12,9 @@
  *   (overflow when the capture needs more, after the FIFO).
  * - Hardware trigger (as the gateware): nothing streamed until the trigger, then the stream starts at
  *   word max(0, W - pretrigger) (W: word of the trigger sample), limit counted from the trigger cycle.
+ * - Outputs (as the gateware, gateware latencies, pads not modeled): AUX0/AUX1 and the output channels
+ *   (outputs=<hex channels mask>, default none), captured on their channel when enabled. loop=<out>:<ch>:
+ *   output <out> wired to channel <ch> (loopback tests).
  * - Flash: 16MB SPI Flash (W25Q128-like: JEDEC ID ef 40 18) on hidden pads (pins), golden image area
  *   (0x800000-) filled with 0xa5.
  *
@@ -63,6 +66,10 @@ struct sim {
     uint64_t search;      /* Next sample searched for the trigger. */
     uint64_t trigger_count;
     uint64_t end;         /* Capture end (samples, 0: none). */
+    /* Outputs. */
+    uint16_t out_channels;
+    uint32_t out_ctrl, out_sel, out_pulse, out_high, out_low;
+    int      loop_out, loop_ch; /* Loopback wire (-1: none). */
     /* Stream. */
     int      streaming, ended, overflow_after_words;
     uint64_t sample;      /* Next captured sample index. */
@@ -205,7 +212,82 @@ static int sim_uart(uint64_t t)
     return 1;     /* Stop/idle. */
 }
 
+#define SIM_NAUX 2
+
+static int sim_noutputs(const struct sim *s)
+{
+    int n = SIM_NAUX;
+    for (int c = 0; c < 16; c++)
+        n += (s->out_channels >> c) & 1;
+    return n;
+}
+
+static int sim_output_channel(const struct sim *s, int out)
+{
+    int k = out - SIM_NAUX;
+    for (int c = 0; c < 16 && k >= 0; c++)
+        if ((s->out_channels >> c) & 1) {
+            if (!k)
+                return c;
+            k--;
+        }
+    return -1;
+}
+
+/* Output n level at sample clock cycle c of the capture (gateware/output.py, latencies of
+ * test/test_output.py). */
+static int sim_output_value(const struct sim *s, int n, uint64_t c)
+{
+    unsigned src = (s->out_sel >> (4*n)) & 0xf;
+    int v = 0;
+    int triggered = !!(s->status & SLOGIC_STATUS_TRIGGERED);
+    uint64_t tcyc = s->trigger_count*(s->divider ? s->divider : 1)/SIM_RATIO;
+    switch (src) {
+    case SLOGIC_OUT_GPIO:    v = (s->out_ctrl >> (16 + n)) & 1; break;
+    case SLOGIC_OUT_TRIGGER: {
+        uint64_t t0 = tcyc + SLOGIC_OUT_TRIGGER_LATENCY + (s->out_pulse & 0xffffff);
+        v = triggered && c >= t0 && c < t0 + (s->out_pulse >> 24);
+        break;
+    }
+    case SLOGIC_OUT_ARMED:   v = (s->trigger & SLOGIC_TRIGGER_ENABLE) && (!triggered || c < tcyc + SLOGIC_OUT_TRIGGER_LATENCY); break;
+    case SLOGIC_OUT_CAPTURE: v = 1; break;
+    case SLOGIC_OUT_PERIODIC: {
+        uint64_t period = (uint64_t)s->out_high + s->out_low;
+        v = c >= SLOGIC_OUT_PERIODIC_LATENCY && s->out_high &&
+            (!s->out_low || ((c - SLOGIC_OUT_PERIODIC_LATENCY) % period) < s->out_high);
+        break;
+    }
+    default:
+        if (src >= SLOGIC_OUT_GENERATOR && src < SLOGIC_OUT_GENERATOR + 8) {
+            uint64_t g = c >= SLOGIC_OUT_GENERATOR_LATENCY ? c - SLOGIC_OUT_GENERATOR_LATENCY : 0;
+            v = (slogic_generator_sample(8*g) >> (src - SLOGIC_OUT_GENERATOR)) & 1;
+        }
+        break;
+    }
+    return v ^ ((s->out_ctrl >> (8 + n)) & 1);
+}
+
+static uint16_t sim_input(const struct sim *s, uint64_t i);
+
 static uint16_t sim_sample(const struct sim *s, uint64_t i)
+{
+    uint16_t v = sim_input(s, i);
+    uint64_t c = i*(s->divider ? s->divider : 1)/SIM_RATIO;
+    /* Enabled outputs: on their channel (readback) and on the loopback channel. */
+    for (int n = 0; n < sim_noutputs(s); n++) {
+        if (!((s->out_ctrl >> n) & 1))
+            continue;
+        int ch  = sim_output_channel(s, n);
+        int val = sim_output_value(s, n, c);
+        if (ch >= 0)
+            v = (uint16_t)((v & ~(1u << ch)) | (val << ch));
+        if (n == s->loop_out && s->loop_ch >= 0)
+            v = (uint16_t)((v & ~(1u << s->loop_ch)) | (val << s->loop_ch));
+    }
+    return v;
+}
+
+static uint16_t sim_input(const struct sim *s, uint64_t i)
 {
     uint64_t t = i*(s->divider ? s->divider : 1); /* Base sample index. */
     if (((s->control >> 8) & 3) == SLOGIC_PATTERN_COUNTER)
@@ -369,7 +451,7 @@ static uint32_t sim_read(struct sim *s, uint32_t addr)
     }
     switch (addr) {
     case SLOGIC_ANALYZER_MAGIC:     return SLOGIC_MAGIC;
-    case SLOGIC_ANALYZER_VERSION:   return 0x00000002;
+    case SLOGIC_ANALYZER_VERSION:   return 0x00000003;
     case SLOGIC_ANALYZER_CONFIG:    return 16 | SIM_RATIO << 8 | (SIM_FIFO_WORDS/64) << 16;
     case SLOGIC_ANALYZER_BASE_RATE: return (uint32_t)SIM_BASE_RATE;
     case SLOGIC_ANALYZER_CONTROL:   return s->control;
@@ -386,6 +468,21 @@ static uint32_t sim_read(struct sim *s, uint32_t addr)
     case SLOGIC_ANALYZER_PRETRIGGER:    return s->pretrigger;
     case SLOGIC_ANALYZER_TRIGGER_COUNT:     return (uint32_t)(s->trigger_count >> 32);
     case SLOGIC_ANALYZER_TRIGGER_COUNT + 4: return (uint32_t)s->trigger_count;
+    case SLOGIC_ANALYZER_OUT_CONFIG: return s->out_channels | SIM_NAUX << 16;
+    case SLOGIC_ANALYZER_OUT_CTRL:   return s->out_ctrl;
+    case SLOGIC_ANALYZER_OUT_SEL:    return s->out_sel;
+    case SLOGIC_ANALYZER_OUT_LEVELS: {
+        /* Pad levels now: enabled outputs (capture time base), others: input (AUX: pulled low). */
+        uint64_t c = (uint64_t)((slogic_time() - s->t_start)*SIM_SAMPLE_CLK);
+        uint32_t l = 0;
+        for (int n = 0; n < sim_noutputs(s); n++) {
+            int ch = sim_output_channel(s, n);
+            int v  = ((s->out_ctrl >> n) & 1) ? sim_output_value(s, n, c) :
+                     ch >= 0 ? (sim_input(s, c*SIM_RATIO/(s->divider ? s->divider : 1)) >> ch) & 1 : 0;
+            l |= (uint32_t)v << n;
+        }
+        return l;
+    }
     case SLOGIC_FLASH_CONTROL:      return s->flash_control;
     case SLOGIC_FLASH_DIVIDER:      return s->flash_divider;
     case SLOGIC_FLASH_XFER:         return s->flash_xfer;
@@ -419,6 +516,11 @@ static void sim_write(struct sim *s, uint32_t addr, uint32_t val)
     case SLOGIC_ANALYZER_TRIGGER_LEVEL: s->trigger_level = val; break;
     case SLOGIC_ANALYZER_TRIGGER_EDGE:  s->trigger_edge = val; break;
     case SLOGIC_ANALYZER_PRETRIGGER:    s->pretrigger = val & 0xffff; break;
+    case SLOGIC_ANALYZER_OUT_CTRL:   s->out_ctrl   = val & 0xffffff; break;
+    case SLOGIC_ANALYZER_OUT_SEL:    s->out_sel    = val; break;
+    case SLOGIC_ANALYZER_OUT_PULSE:  s->out_pulse  = val; break;
+    case SLOGIC_ANALYZER_OUT_HIGH:   s->out_high   = val & 0xffffff; break;
+    case SLOGIC_ANALYZER_OUT_LOW:    s->out_low    = val & 0xffffff; break;
     case SLOGIC_ANALYZER_LIMIT:     s->limit = (s->limit & 0xffffffffULL) | (uint64_t)val << 32; break;
     case SLOGIC_ANALYZER_LIMIT + 4: s->limit = (s->limit & ~0xffffffffULL) | val; break;
     case SLOGIC_FLASH_CONTROL:
@@ -573,6 +675,12 @@ int slogic_sim_open(const char *args, struct slogic_dev *dev)
     if ((p = strstr(args, "rate=")))
         s->rate = atof(p + 5);
     s->realtime = !strstr(args, "fast");
+    s->loop_out   = -1;
+    s->loop_ch    = -1;
+    if ((p = strstr(args, "outputs=")))
+        s->out_channels = (uint16_t)strtoul(p + 8, NULL, 16);
+    if ((p = strstr(args, "loop=")))
+        sscanf(p + 5, "%d:%d", &s->loop_out, &s->loop_ch);
     if ((p = strstr(args, "pins=")) && strlen(p + 5) >= 4)
         for (int i = 0; i < 4; i++)
             s->pins[i] = (unsigned)(p[5 + i] - '0') % SLOGIC_FLASH_NPADS;
