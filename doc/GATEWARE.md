@@ -153,13 +153,24 @@ BSRAMs on the GW5AT-15A).
 | USB3 only (`--no-analyzer --no-flash`, 1.9.10) | 10368 (69%) | 86%¹ | 83.4MHz | 126.9MHz | -  |
 | Full (place_option 3)          | 13222 (88%) | 34/35 | 74.7MHz    | 131.5MHz  | 101.8MHz     |
 | Full + hardware trigger (0.2, place_option 2, CRC-32 cascade) | 13823 (92%) | 34/35 | 75.9MHz | 143.9MHz | 106.4MHz |
-| Full + outputs (0.3, AUX IOs, place_option 2) | 13973 (92%) | 34/35 | 71.5MHz | 143.7MHz | 132.1MHz |
-| Full + outputs + `--outputs CH14,CH15` (place_option 2) | 13970 (92%) | 34/35 | 63.2MHz | 134.6MHz | 128.0MHz |
+| Full + outputs (0.3, AUX IOs, place_option 3, route_option 2) | 13759 (91%) | 34/35 | 78.4MHz | 163.6MHz | 124.8MHz |
+| Full + outputs + `--outputs CH14,CH15` (place_option 3, route_option 2) | 13707 (91%) | 34/35 | 79.9MHz | 152.0MHz | 124.1MHz |
 
 ¹ USB3 packets slots optimized out without the Analyzer.
 
-Gowin PnR has no seed and the design is ~90% full: `scripts/build_best.py` builds several place algorithms in
-parallel and keeps the one with the best margins (1.9.12: 4 of 5 meet the timings, 1.9.10: 1 of 5).
+Gowin PnR has no seed and the design is ~90% full: `scripts/build_best.py` builds each place algorithm with
+each route algorithm in parallel (5 x 2) and keeps the one with the best margins.
+
+- 0.3, Gowin 1.9.12, route_option 2 (default): **all 5 place algorithms meet the timings**, with the default and the `--outputs CH14,CH15` builds.
+  - Worst over the 10 builds: sys ≥ 66MHz, tx ≥ 129MHz, sample ≥ 107MHz.
+- route_option 1: 8/10 (one unrouted, one at sys 58MHz).
+- Gowin results are deterministic for a netlist, but change with any netlist change.
+- What made it robust:
+  - Reset-less datapath registers: sample_rst fanout ~1250 → a few hundred, less routing congestion.
+  - Registered paths in USB3-PIPE: TX CRC-32 input, TS generator words/busy, TS checker comparisons, GW5 TX datapath input.
+  - Capture: kept samples count from a table, limit decision off the 48-bit counters.
+  - Registered EP0 Wishbone bus.
+  - 16-bit pre-trigger window counters.
 
 ## Simulation
 

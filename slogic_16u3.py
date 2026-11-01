@@ -314,7 +314,7 @@ def main():
     parser.add_argument("--usb3-pll",          default="QPLL0",         help="GTR12 lane PLL.", choices=["QPLL0", "QPLL1"])
     parser.add_argument("--device-version",    default="B",             help="GW5AT-15 device version (A: Gowin 1.9.10).", choices=["A", "B"])
     parser.add_argument("--place-option",      default=2, type=int,     help="Gowin place algorithm.", choices=[0, 1, 2, 3, 4])
-    parser.add_argument("--route-option",      default=1, type=int,     help="Gowin route algorithm.", choices=[0, 1, 2])
+    parser.add_argument("--route-option",      default=2, type=int,     help="Gowin route algorithm (2: all the place algorithms meet the timings).", choices=[0, 1, 2])
     parser.add_argument("--replicate-resources", default=0, type=int,   help="Gowin resources replication (timings vs logic).", choices=[0, 1])
     parser.add_argument("--outputs",           default="",              help="Output channels (ex: CH14,CH15, max 4): tristate LVCMOS33 IOs (low swing through the input dividers, LVCMOS33 input threshold).")
     parser.add_argument("--no-aux",            action="store_true",     help="Build without the AUX IOs (JST SH connector UART pins).")
